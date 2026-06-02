@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JSDB Demo - JavaScript SQL Database</title>
+    <script src="../jsdb.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #555;
+            margin-top: 30px;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .sql-input {
+            width: 100%;
+            min-height: 80px;
+            padding: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            resize: vertical;
+        }
+        .button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 5px;
+        }
+        .button:hover {
+            background-color: #45a049;
+        }
+        .button.secondary {
+            background-color: #2196F3;
+        }
+        .button.secondary:hover {
+            background-color: #0b7dda;
+        }
+        .button.danger {
+            background-color: #f44336;
+        }
+        .button.danger:hover {
+            background-color: #da190b;
+        }
+        .output {
+            background-color: #f9f9f9;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 15px;
+            margin-top: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            white-space: pre-wrap;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .success {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+        .error {
+            color: #f44336;
+            font-weight: bold;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #4CAF50;
+            color: white;
+        }
+        tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+        .example {
+            background-color: #e8f5e9;
+            padding: 10px;
+            border-left: 4px solid #4CAF50;
+            margin: 10px 0;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+        }
+        .info {
+            background-color: #e3f2fd;
+            padding: 15px;
+            border-left: 4px solid #2196F3;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>🗄️ JSDB Demo - JavaScript SQL Database</h1>
+    
+    <div class="info">
+        <strong>JSDB とは？</strong><br>
+        ブラウザで動作する軽量 SQL データベースライブラリです。IndexedDB を使用してデータを永続化します。
+    </div>
+
+    <div class="container">
+        <h2>📝 SQL エディタ</h2>
+        <textarea id="sqlInput" class="sql-input" placeholder="SQL文を入力してください...">CREATE TABLE users (id INTEGER, name TEXT, age INTEGER)</textarea>
+        <div style="margin-top: 10px;">
+            <label for="paramsInput" style="display: block; margin-bottom: 5px; font-weight: bold;">パラメータ（オプション）:</label>
+            <input type="text" id="paramsInput" class="sql-input" style="min-height: 40px;" placeholder="例: [1, 'Alice', 25] または {id: 1, name: 'Alice', age: 25}">
+        </div>
+        <div>
+            <button class="button" onclick="executeSQL()">実行</button>
+            <button class="button secondary" onclick="clearOutput()">出力をクリア</button>
+            <button class="button danger" onclick="deleteDB()">データベースを削除</button>
+        </div>
+        <div id="output" class="output"></div>
+    </div>
+
+    <div class="container">
+        <h2>📚 サンプル SQL</h2>
+        
+        <h3>1. テーブル作成</h3>
+        <div class="example" onclick="setSQL(this.textContent)">CREATE TABLE users (id INTEGER, name TEXT, age INTEGER)</div>
+        <div class="example" onclick="setSQL(this.textContent)">CREATE TABLE events (id INTEGER, title TEXT, event_date DATE)</div>
+        
+        <h3>2. データ挿入</h3>
+        <div class="example" onclick="setSQL(this.textContent)">INSERT INTO users (id, name, age) VALUES (1, 'Alice', 25)</div>
+        <div class="example" onclick="setSQL(this.textContent)">INSERT INTO users (id, name, age) VALUES (2, 'Bob', 30)</div>
+        <div class="example" onclick="setSQL(this.textContent)">INSERT INTO users (id, name, age) VALUES (3, 'Charlie', 22)</div>
+        <div class="example" onclick="setSQL(this.textContent)">INSERT INTO users (id, name, age) VALUES (1, 'Alice', 25), (2, 'Bob', 30), (3, 'Charlie', 22)</div>
+        <div class="example" onclick="setSQL(this.textContent)">INSERT INTO events (id, title, event_date) VALUES (1, 'Meeting', '2026-06-15')</div>
+        <div class="example" onclick="setSQL(this.textContent)">INSERT INTO events (id, title, event_date) VALUES (2, 'Conference', '2026-07-01')</div>
+        <div class="example" onclick="setSQL(this.textContent)">INSERT INTO events (id, title, event_date) VALUES (1, 'Meeting', '2026-06-15'), (2, 'Conference', '2026-07-01')</div>
+        
+        <h3>3. データ取得</h3>
+        <div class="example" onclick="setSQL(this.textContent)">SELECT * FROM users</div>
+        <div class="example" onclick="setSQL(this.textContent)">SELECT name, age FROM users WHERE age > 23</div>
+        <div class="example" onclick="setSQL(this.textContent)">SELECT * FROM users WHERE age >= 25 AND age <= 30</div>
+        <div class="example" onclick="setSQL(this.textContent)">SELECT * FROM users WHERE name = 'Alice' OR age > 28</div>
+        <div class="example" onclick="setSQL(this.textContent)">SELECT * FROM users WHERE name LIKE '%li%'</div>
+        <div class="example" onclick="setSQL(this.textContent)">SELECT * FROM users WHERE name LIKE 'A%'</div>
+        <div class="example" onclick="setSQL(this.textContent)">SELECT * FROM events</div>
+        <div class="example" onclick="setSQL(this.textContent)">SELECT * FROM events WHERE event_date > '2026-06-20'</div>
+        <div class="example" onclick="setSQL(this.textContent)">SELECT * FROM events WHERE title LIKE '%ing'</div>
+        
+        <h3>4. データ更新</h3>
+        <div class="example" onclick="setSQL(this.textContent)">UPDATE users SET age = 26 WHERE name = 'Alice'</div>
+        <div class="example" onclick="setSQL(this.textContent)">UPDATE users SET age = 31, name = 'Robert' WHERE id = 2</div>
+        
+        <h3>5. データ削除</h3>
+        <div class="example" onclick="setSQL(this.textContent)">DELETE FROM users WHERE age < 25</div>
+        <div class="example" onclick="setSQL(this.textContent)">DELETE FROM users WHERE name = 'Bob'</div>
+        
+        <h3>6. プレースホルダー（位置指定）</h3>
+        <div class="example" onclick="setSQL(this.textContent, '[4, \'Diana\', 28]')">INSERT INTO users (id, name, age) VALUES (?, ?, ?)</div>
+        <div class="example" onclick="setSQL(this.textContent, '[\'Alice\']')">SELECT * FROM users WHERE name = ?</div>
+        <div class="example" onclick="setSQL(this.textContent, '[25, 30]')">SELECT * FROM users WHERE age > ? AND age < ?</div>
+        <div class="example" onclick="setSQL(this.textContent, '[27, \'Alice\']')">UPDATE users SET age = ? WHERE name = ?</div>
+        <div class="example" onclick="setSQL(this.textContent, '[4]')">DELETE FROM users WHERE id = ?</div>
+        
+        <h3>7. プレースホルダー（名前付き）</h3>
+        <div class="example" onclick="setSQL(this.textContent, '{id: 5, name: \'Eve\', age: 24}')">INSERT INTO users (id, name, age) VALUES (:id, :name, :age)</div>
+        <div class="example" onclick="setSQL(this.textContent, '{name: \'Bob\'}')">SELECT * FROM users WHERE name = :name</div>
+        <div class="example" onclick="setSQL(this.textContent, '{minAge: 25, maxAge: 30}')">SELECT * FROM users WHERE age > :minAge AND age < :maxAge</div>
+        <div class="example" onclick="setSQL(this.textContent, '{age: 32, name: \'Bob\'}')">UPDATE users SET age = :age WHERE name = :name</div>
+        <div class="example" onclick="setSQL(this.textContent, '{id: 5}')">DELETE FROM users WHERE id = :id</div>
+    </div>
+
+    <div class="container">
+        <h2>🔧 クイックスタート</h2>
+        <button class="button" onclick="quickStart()">クイックスタートを実行</button>
+        <p>テーブル作成、データ挿入、データ取得を一括で実行します。</p>
+    </div>
+
+    <script>
+        let db;
+
+        // データベースを初期化
+        async function initDB() {
+            if (!db) {
+                db = new JSDB('demo_db');
+                await db.initialize();
+            }
+        }
+
+        // SQLを実行
+        async function executeSQL() {
+            const sqlInput = document.getElementById('sqlInput');
+            const paramsInput = document.getElementById('paramsInput');
+            const output = document.getElementById('output');
+            const sql = sqlInput.value.trim();
+
+            if (!sql) {
+                output.innerHTML = '<span class="error">SQL文を入力してください</span>';
+                return;
+            }
+
+            try {
+                await initDB();
+                const startTime = performance.now();
+                
+                // パラメータがある場合は評価
+                let params = null;
+                const paramsText = paramsInput.value.trim();
+                if (paramsText) {
+                    try {
+                        params = eval(`(${paramsText})`);
+                    } catch (e) {
+                        output.innerHTML = `<span class="error">✗ パラメータのパースエラー</span>\n\n${e.message}`;
+                        return;
+                    }
+                }
+                
+                const result = await db.execute(sql, params);
+                const endTime = performance.now();
+                const executionTime = (endTime - startTime).toFixed(2);
+
+                let outputHTML = `<span class="success">✓ 実行成功</span> (${executionTime}ms)\n\n`;
+                if (params) {
+                    outputHTML += `<strong>パラメータ:</strong>\n${JSON.stringify(params, null, 2)}\n\n`;
+                }
+                outputHTML += `<strong>結果:</strong>\n`;
+                outputHTML += JSON.stringify(result, null, 2);
+
+                // SELECT文の場合はテーブル表示
+                if (result.type === 'SELECT' && result.rows && result.rows.length > 0) {
+                    outputHTML += '\n\n<strong>データ:</strong>\n';
+                    outputHTML += createTable(result.rows);
+                }
+
+                output.innerHTML = outputHTML;
+            } catch (error) {
+                output.innerHTML = `<span class="error">✗ エラー</span>\n\n${error.message}`;
+            }
+        }
+
+        // テーブルHTMLを作成
+        function createTable(rows) {
+            if (!rows || rows.length === 0) return '';
+
+            const columns = Object.keys(rows[0]);
+            let html = '<table>';
+            
+            // ヘッダー
+            html += '<tr>';
+            columns.forEach(col => {
+                html += `<th>${col}</th>`;
+            });
+            html += '</tr>';
+            
+            // データ行
+            rows.forEach(row => {
+                html += '<tr>';
+                columns.forEach(col => {
+                    const value = row[col] !== null && row[col] !== undefined ? row[col] : 'NULL';
+                    html += `<td>${value}</td>`;
+                });
+                html += '</tr>';
+            });
+            
+            html += '</table>';
+            return html;
+        }
+
+        // SQLをセット
+        function setSQL(sql, params = '') {
+            document.getElementById('sqlInput').value = sql.trim();
+            document.getElementById('paramsInput').value = params;
+        }
+
+        // 出力をクリア
+        function clearOutput() {
+            document.getElementById('output').innerHTML = '';
+        }
+
+        // データベースを削除
+        async function deleteDB() {
+            if (confirm('データベースを削除してもよろしいですか？')) {
+                try {
+                    if (db) {
+                        db.close();
+                        db = null;
+                    }
+                    await JSDB.deleteDatabase('demo_db');
+                    document.getElementById('output').innerHTML = '<span class="success">✓ データベースを削除しました</span>';
+                } catch (error) {
+                    document.getElementById('output').innerHTML = `<span class="error">✗ エラー</span>\n\n${error.message}`;
+                }
+            }
+        }
+
+        // クイックスタート
+        async function quickStart() {
+            const output = document.getElementById('output');
+            output.innerHTML = '<span class="success">クイックスタートを実行中...</span>\n\n';
+
+            try {
+                await initDB();
+
+                // テーブル作成
+                output.innerHTML += '1. テーブル作成...\n';
+                await db.execute('CREATE TABLE products (id INTEGER, name TEXT, price REAL)');
+                output.innerHTML += '<span class="success">✓ 完了</span>\n\n';
+
+                // データ挿入
+                output.innerHTML += '2. データ挿入...\n';
+                await db.execute("INSERT INTO products (id, name, price) VALUES (1, 'Apple', 1.5)");
+                await db.execute("INSERT INTO products (id, name, price) VALUES (2, 'Banana', 0.8)");
+                await db.execute("INSERT INTO products (id, name, price) VALUES (3, 'Orange', 1.2)");
+                output.innerHTML += '<span class="success">✓ 完了</span>\n\n';
+
+                // データ取得
+                output.innerHTML += '3. データ取得...\n';
+                const result = await db.execute('SELECT * FROM products');
+                output.innerHTML += '<span class="success">✓ 完了</span>\n\n';
+
+                output.innerHTML += `<strong>結果: ${result.rowCount}件のデータ</strong>\n`;
+                output.innerHTML += createTable(result.rows);
+
+            } catch (error) {
+                output.innerHTML += `\n<span class="error">✗ エラー</span>\n\n${error.message}`;
+            }
+        }
+
+        // Enterキーで実行
+        document.getElementById('sqlInput').addEventListener('keydown', function(e) {
+            if (e.ctrlKey && e.key === 'Enter') {
+                executeSQL();
+            }
+        });
+    </script>
+</body>
+</html>

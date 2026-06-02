@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JSDB Test Suite</title>
+    <script src="../jsdb.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        h1 {
+            color: #333;
+        }
+        .test-container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .test-result {
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+        .test-pass {
+            background-color: #d4edda;
+            border-left: 4px solid #28a745;
+            color: #155724;
+        }
+        .test-fail {
+            background-color: #f8d7da;
+            border-left: 4px solid #dc3545;
+            color: #721c24;
+        }
+        .test-info {
+            background-color: #d1ecf1;
+            border-left: 4px solid #17a2b8;
+            color: #0c5460;
+        }
+        .summary {
+            font-size: 18px;
+            font-weight: bold;
+            padding: 15px;
+            border-radius: 4px;
+            margin-top: 20px;
+        }
+        .summary.success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .summary.failure {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .progress {
+            margin: 20px 0;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 30px;
+            background-color: #e9ecef;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            background-color: #28a745;
+            transition: width 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 JSDB Test Suite</h1>
+    
+    <div class="test-container">
+        <button onclick="runAllTests()">すべてのテストを実行</button>
+        <div class="progress">
+            <div class="progress-bar">
+                <div id="progressFill" class="progress-fill" style="width: 0%">0%</div>
+            </div>
+        </div>
+        <div id="testResults"></div>
+        <div id="summary"></div>
+    </div>
+
+    <script>
+        let testResults = [];
+        let db;
+
+        // テスト結果を表示
+        function displayResult(testName, passed, message = '') {
+            const resultsDiv = document.getElementById('testResults');
+            const resultDiv = document.createElement('div');
+            resultDiv.className = `test-result ${passed ? 'test-pass' : 'test-fail'}`;
+            resultDiv.textContent = `${passed ? '✓' : '✗'} ${testName}${message ? ': ' + message : ''}`;
+            resultsDiv.appendChild(resultDiv);
+            
+            testResults.push({ testName, passed, message });
+        }
+
+        // 情報を表示
+        function displayInfo(message) {
+            const resultsDiv = document.getElementById('testResults');
+            const infoDiv = document.createElement('div');
+            infoDiv.className = 'test-result test-info';
+            infoDiv.textContent = `ℹ ${message}`;
+            resultsDiv.appendChild(infoDiv);
+        }
+
+        // 進捗を更新
+        function updateProgress(current, total) {
+            const percentage = Math.round((current / total) * 100);
+            const progressFill = document.getElementById('progressFill');
+            progressFill.style.width = `${percentage}%`;
+            progressFill.textContent = `${percentage}%`;
+        }
+
+        // サマリーを表示
+        function displaySummary() {
+            const summaryDiv = document.getElementById('summary');
+            const passed = testResults.filter(r => r.passed).length;
+            const failed = testResults.filter(r => !r.passed).length;
+            const total = testResults.length;
+            
+            const allPassed = failed === 0;
+            summaryDiv.className = `summary ${allPassed ? 'success' : 'failure'}`;
+            summaryDiv.textContent = `テスト結果: ${passed}/${total} 成功, ${failed} 失敗`;
+        }
+
+        // すべてのテストを実行
+        async function runAllTests() {
+            const resultsDiv = document.getElementById('testResults');
+            const summaryDiv = document.getElementById('summary');
+            resultsDiv.innerHTML = '';
+            summaryDiv.innerHTML = '';
+            testResults = [];
+
+            try {
+                // データベースをクリーンアップ
+                if (db) {
+                    db.close();
+                }
+                await JSDB.deleteDatabase('test_db');
+                
+                displayInfo('テストを開始します...');
+
+                const tests = [
+                    testDatabaseCreation,
+                    testCreateTable,
+                    testInsertData,
+                    testSelectAll,
+                    testSelectWithWhere,
+                    testSelectWithAndOr,
+                    testUpdateData,
+                    testUpdateWithWhere,
+                    testDeleteData,
+                    testDeleteWithWhere,
+                    testDataTypes,
+                    testComplexQueries,
+                    testErrorHandling
+                ];
+
+                for (let i = 0; i < tests.length; i++) {
+                    await tests[i]();
+                    updateProgress(i + 1, tests.length);
+                }
+
+                displaySummary();
+                displayInfo('すべてのテストが完了しました');
+
+            } catch (error) {
+                displayResult('テスト実行エラー', false, error.message);
+            }
+        }
+
+        // Test 1: データベース作成
+        async function testDatabaseCreation() {
+            try {
+                db = new JSDB('test_db');
+                await db.initialize();
+                displayResult('データベース作成', true);
+            } catch (error) {
+                displayResult('データベース作成', false, error.message);
+            }
+        }
+
+        // Test 2: テーブル作成
+        async function testCreateTable() {
+            try {
+                const result = await db.execute('CREATE TABLE users (id INTEGER, name TEXT, age INTEGER)');
+                const passed = result.success && result.type === 'CREATE_TABLE';
+                displayResult('CREATE TABLE', passed);
+            } catch (error) {
+                displayResult('CREATE TABLE', false, error.message);
+            }
+        }
+
+        // Test 3: データ挿入
+        async function testInsertData() {
+            try {
+                await db.execute("INSERT INTO users (id, name, age) VALUES (1, 'Alice', 25)");
+                await db.execute("INSERT INTO users (id, name, age) VALUES (2, 'Bob', 30)");
+                await db.execute("INSERT INTO users (id, name, age) VALUES (3, 'Charlie', 22)");
+                displayResult('INSERT データ挿入', true);
+            } catch (error) {
+                displayResult('INSERT データ挿入', false, error.message);
+            }
+        }
+
+        // Test 4: 全データ取得
+        async function testSelectAll() {
+            try {
+                const result = await db.execute('SELECT * FROM users');
+                const passed = result.success && result.rowCount === 3;
+                displayResult('SELECT * (全データ取得)', passed, `${result.rowCount}件取得`);
+            } catch (error) {
+                displayResult('SELECT * (全データ取得)', false, error.message);
+            }
+        }
+
+        // Test 5: WHERE句でのデータ取得
+        async function testSelectWithWhere() {
+            try {
+                const result = await db.execute('SELECT * FROM users WHERE age > 23');
+                const passed = result.success && result.rowCount === 2;
+                displayResult('SELECT WHERE (単純条件)', passed, `${result.rowCount}件取得`);
+            } catch (error) {
+                displayResult('SELECT WHERE (単純条件)', false, error.message);
+            }
+        }
+
+        // Test 6: AND/OR条件でのデータ取得
+        async function testSelectWithAndOr() {
+            try {
+                const result1 = await db.execute('SELECT * FROM users WHERE age >= 25 AND age <= 30');
+                const passed1 = result1.success && result1.rowCount === 2;
+                
+                const result2 = await db.execute("SELECT * FROM users WHERE name = 'Alice' OR age > 28");
+                const passed2 = result2.success && result2.rowCount === 2;
+                
+                displayResult('SELECT WHERE AND', passed1, `${result1.rowCount}件取得`);
+                displayResult('SELECT WHERE OR', passed2, `${result2.rowCount}件取得`);
+            } catch (error) {
+                displayResult('SELECT WHERE AND/OR', false, error.message);
+            }
+        }
+
+        // Test 7: データ更新
+        async function testUpdateData() {
+            try {
+                const result = await db.execute("UPDATE users SET age = 26 WHERE name = 'Alice'");
+                const passed = result.success && result.rowCount === 1;
+                
+                // 更新を確認
+                const checkResult = await db.execute("SELECT age FROM users WHERE name = 'Alice'");
+                const verified = checkResult.rows[0].age === 26;
+                
+                displayResult('UPDATE (単純更新)', passed && verified, `${result.rowCount}件更新`);
+            } catch (error) {
+                displayResult('UPDATE (単純更新)', false, error.message);
+            }
+        }
+
+        // Test 8: WHERE句でのデータ更新
+        async function testUpdateWithWhere() {
+            try {
+                const result = await db.execute('UPDATE users SET age = 31 WHERE age > 29');
+                const passed = result.success && result.rowCount === 1;
+                displayResult('UPDATE WHERE', passed, `${result.rowCount}件更新`);
+            } catch (error) {
+                displayResult('UPDATE WHERE', false, error.message);
+            }
+        }
+
+        // Test 9: データ削除
+        async function testDeleteData() {
+            try {
+                const result = await db.execute('DELETE FROM users WHERE age < 25');
+                const passed = result.success && result.rowCount === 1;
+                displayResult('DELETE (単純削除)', passed, `${result.rowCount}件削除`);
+            } catch (error) {
+                displayResult('DELETE (単純削除)', false, error.message);
+            }
+        }
+
+        // Test 10: WHERE句でのデータ削除
+        async function testDeleteWithWhere() {
+            try {
+                const beforeResult = await db.execute('SELECT * FROM users');
+                const beforeCount = beforeResult.rowCount;
+                
+                const result = await db.execute("DELETE FROM users WHERE name = 'Bob'");
+                const passed = result.success && result.rowCount === 1;
+                
+                const afterResult = await db.execute('SELECT * FROM users');
+                const verified = afterResult.rowCount === beforeCount - 1;
+                
+                displayResult('DELETE WHERE', passed && verified, `${result.rowCount}件削除`);
+            } catch (error) {
+                displayResult('DELETE WHERE', false, error.message);
+            }
+        }
+
+        // Test 11: データ型のテスト
+        async function testDataTypes() {
+            try {
+                await db.execute('CREATE TABLE products (id INTEGER, name TEXT, price REAL)');
+                await db.execute("INSERT INTO products (id, name, price) VALUES (1, 'Apple', 1.5)");
+                await db.execute("INSERT INTO products (id, name, price) VALUES (2, 'Banana', 0.8)");
+                
+                const result = await db.execute('SELECT * FROM products WHERE price < 1.0');
+                const passed = result.success && result.rowCount === 1 && result.rows[0].name === 'Banana';
+                
+                displayResult('データ型 (INTEGER, TEXT, REAL)', passed);
+            } catch (error) {
+                displayResult('データ型 (INTEGER, TEXT, REAL)', false, error.message);
+            }
+        }
+
+        // Test 12: 複雑なクエリ
+        async function testComplexQueries() {
+            try {
+                // 複数カラムの選択
+                const result1 = await db.execute('SELECT name, price FROM products');
+                const passed1 = result1.success && result1.rows[0].hasOwnProperty('name') && 
+                               result1.rows[0].hasOwnProperty('price') && 
+                               !result1.rows[0].hasOwnProperty('id');
+                
+                // 複雑なWHERE条件
+                const result2 = await db.execute('SELECT * FROM products WHERE price > 0.5 AND price < 2.0');
+                const passed2 = result2.success && result2.rowCount === 2;
+                
+                displayResult('複雑なクエリ (カラム選択)', passed1);
+                displayResult('複雑なクエリ (複合WHERE)', passed2);
+            } catch (error) {
+                displayResult('複雑なクエリ', false, error.message);
+            }
+        }
+
+        // Test 13: エラーハンドリング
+        async function testErrorHandling() {
+            try {
+                let errorCaught = false;
+                
+                // 存在しないテーブル
+                try {
+                    await db.execute('SELECT * FROM nonexistent');
+                } catch (error) {
+                    errorCaught = true;
+                }
+                
+                const passed1 = errorCaught;
+                displayResult('エラーハンドリング (存在しないテーブル)', passed1);
+                
+                // 重複テーブル作成
+                errorCaught = false;
+                try {
+                    await db.execute('CREATE TABLE users (id INTEGER)');
+                } catch (error) {
+                    errorCaught = true;
+                }
+                
+                const passed2 = errorCaught;
+                displayResult('エラーハンドリング (重複テーブル)', passed2);
+                
+            } catch (error) {
+                displayResult('エラーハンドリング', false, error.message);
+            }
+        }
+    </script>
+</body>
+</html>

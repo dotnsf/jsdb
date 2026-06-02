@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JSDB 日付型テスト</title>
+    <script src="../jsdb.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        h1 {
+            color: #333;
+        }
+        .test-container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .test-result {
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+        .test-pass {
+            background-color: #d4edda;
+            border-left: 4px solid #28a745;
+            color: #155724;
+        }
+        .test-fail {
+            background-color: #f8d7da;
+            border-left: 4px solid #dc3545;
+            color: #721c24;
+        }
+        .test-info {
+            background-color: #d1ecf1;
+            border-left: 4px solid #17a2b8;
+            color: #0c5460;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        pre {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>📅 JSDB 日付型テスト</h1>
+    
+    <div class="test-container">
+        <button onclick="runDateTests()">日付型テストを実行</button>
+        <div id="testResults"></div>
+    </div>
+
+    <script>
+        let db;
+
+        function displayResult(testName, passed, message = '') {
+            const resultsDiv = document.getElementById('testResults');
+            const resultDiv = document.createElement('div');
+            resultDiv.className = `test-result ${passed ? 'test-pass' : 'test-fail'}`;
+            resultDiv.textContent = `${passed ? '✓' : '✗'} ${testName}${message ? ': ' + message : ''}`;
+            resultsDiv.appendChild(resultDiv);
+        }
+
+        function displayInfo(message) {
+            const resultsDiv = document.getElementById('testResults');
+            const infoDiv = document.createElement('div');
+            infoDiv.className = 'test-result test-info';
+            infoDiv.innerHTML = message;
+            resultsDiv.appendChild(infoDiv);
+        }
+
+        async function runDateTests() {
+            const resultsDiv = document.getElementById('testResults');
+            resultsDiv.innerHTML = '';
+
+            try {
+                // データベースをクリーンアップ
+                if (db) {
+                    db.close();
+                }
+                await JSDB.deleteDatabase('date_test_db');
+                
+                displayInfo('日付型テストを開始します...');
+
+                // データベース作成
+                db = new JSDB('date_test_db');
+                await db.initialize();
+                displayResult('データベース作成', true);
+
+                // テーブル作成（DATE型）
+                await db.execute('CREATE TABLE events (id INTEGER, title TEXT, event_date DATE)');
+                displayResult('DATE型テーブル作成', true);
+
+                // テーブル作成（DATETIME型）
+                await db.execute('CREATE TABLE logs (id INTEGER, message TEXT, created_at DATETIME)');
+                displayResult('DATETIME型テーブル作成', true);
+
+                // 日付データ挿入（文字列形式）
+                await db.execute("INSERT INTO events (id, title, event_date) VALUES (1, 'Meeting', '2026-06-15')");
+                await db.execute("INSERT INTO events (id, title, event_date) VALUES (2, 'Conference', '2026-07-01')");
+                await db.execute("INSERT INTO events (id, title, event_date) VALUES (3, 'Workshop', '2026-05-20')");
+                displayResult('日付データ挿入（文字列形式）', true);
+
+                // 日時データ挿入
+                await db.execute("INSERT INTO logs (id, message, created_at) VALUES (1, 'System started', '2026-06-01T10:00:00')");
+                await db.execute("INSERT INTO logs (id, message, created_at) VALUES (2, 'User logged in', '2026-06-01T14:30:00')");
+                displayResult('日時データ挿入', true);
+
+                // 全データ取得
+                const allEvents = await db.execute('SELECT * FROM events');
+                displayResult('全イベント取得', allEvents.rowCount === 3, `${allEvents.rowCount}件`);
+                displayInfo(`<pre>${JSON.stringify(allEvents.rows, null, 2)}</pre>`);
+
+                // 日付比較（より大きい）
+                const futureEvents = await db.execute("SELECT * FROM events WHERE event_date > '2026-06-01'");
+                displayResult('日付比較（>）', futureEvents.rowCount === 2, `${futureEvents.rowCount}件取得`);
+
+                // 日付比較（より小さい）
+                const pastEvents = await db.execute("SELECT * FROM events WHERE event_date < '2026-06-01'");
+                displayResult('日付比較（<）', pastEvents.rowCount === 1, `${pastEvents.rowCount}件取得`);
+
+                // 日付範囲検索
+                const rangeEvents = await db.execute("SELECT * FROM events WHERE event_date >= '2026-06-01' AND event_date <= '2026-06-30'");
+                displayResult('日付範囲検索（AND）', rangeEvents.rowCount === 1, `${rangeEvents.rowCount}件取得`);
+
+                // 日付等価比較
+                const specificEvent = await db.execute("SELECT * FROM events WHERE event_date = '2026-06-15'");
+                displayResult('日付等価比較（=）', specificEvent.rowCount === 1 && specificEvent.rows[0].title === 'Meeting');
+
+                // 日時データ取得
+                const allLogs = await db.execute('SELECT * FROM logs');
+                displayResult('全ログ取得', allLogs.rowCount === 2, `${allLogs.rowCount}件`);
+                displayInfo(`<pre>${JSON.stringify(allLogs.rows, null, 2)}</pre>`);
+
+                // 日時比較
+                const recentLogs = await db.execute("SELECT * FROM logs WHERE created_at > '2026-06-01T12:00:00'");
+                displayResult('日時比較', recentLogs.rowCount === 1, `${recentLogs.rowCount}件取得`);
+
+                // 日付データ更新
+                await db.execute("UPDATE events SET event_date = '2026-06-20' WHERE title = 'Meeting'");
+                const updatedEvent = await db.execute("SELECT * FROM events WHERE title = 'Meeting'");
+                const newDate = new Date(updatedEvent.rows[0].event_date);
+                displayResult('日付データ更新', newDate.getDate() === 20);
+
+                // 日付データ削除
+                await db.execute("DELETE FROM events WHERE event_date < '2026-06-01'");
+                const remainingEvents = await db.execute('SELECT * FROM events');
+                displayResult('日付データ削除', remainingEvents.rowCount === 2, `残り${remainingEvents.rowCount}件`);
+
+                displayInfo('<strong>✅ すべての日付型テストが完了しました</strong>');
+
+            } catch (error) {
+                displayResult('テスト実行エラー', false, error.message);
+                console.error(error);
+            }
+        }
+    </script>
+</body>
+</html>

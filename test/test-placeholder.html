@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JSDB Placeholder Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 20px auto;
+            padding: 0 20px;
+        }
+        h1 {
+            color: #333;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .test-section h2 {
+            margin-top: 0;
+            color: #0066cc;
+        }
+        .success {
+            color: green;
+            font-weight: bold;
+        }
+        .error {
+            color: red;
+            font-weight: bold;
+        }
+        pre {
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 3px;
+            overflow-x: auto;
+        }
+        .test-result {
+            margin: 10px 0;
+            padding: 10px;
+            border-left: 4px solid #ddd;
+        }
+        .test-result.pass {
+            border-left-color: green;
+            background: #f0fff0;
+        }
+        .test-result.fail {
+            border-left-color: red;
+            background: #fff0f0;
+        }
+    </style>
+</head>
+<body>
+    <h1>JSDB プレースホルダーテスト</h1>
+    <div id="results"></div>
+
+    <script src="../jsdb.js"></script>
+    <script>
+        const results = document.getElementById('results');
+        let testCount = 0;
+        let passCount = 0;
+        let failCount = 0;
+
+        function addResult(title, passed, message, data = null) {
+            testCount++;
+            if (passed) passCount++;
+            else failCount++;
+
+            const div = document.createElement('div');
+            div.className = `test-result ${passed ? 'pass' : 'fail'}`;
+            div.innerHTML = `
+                <strong>${passed ? '✓' : '✗'} Test ${testCount}: ${title}</strong>
+                <p>${message}</p>
+                ${data ? `<pre>${JSON.stringify(data, null, 2)}</pre>` : ''}
+            `;
+            results.appendChild(div);
+        }
+
+        async function runTests() {
+            try {
+                // データベース初期化
+                const db = new JSDB('test_placeholder_db');
+                await db.execute('CREATE TABLE users (id INTEGER, name TEXT, email TEXT, age INTEGER)');
+
+                // Test 1: 位置指定プレースホルダー - INSERT
+                await db.execute(
+                    'INSERT INTO users (id, name, email, age) VALUES (?, ?, ?, ?)',
+                    [1, 'Alice', 'alice@example.com', 25]
+                );
+                let result = await db.execute('SELECT * FROM users WHERE id = 1');
+                addResult(
+                    '位置指定プレースホルダー - INSERT',
+                    result.rows.length === 1 && result.rows[0].name === 'Alice',
+                    '位置指定プレースホルダー (?) を使用した INSERT が成功',
+                    result.rows[0]
+                );
+
+                // Test 2: 位置指定プレースホルダー - SELECT WHERE
+                result = await db.execute('SELECT * FROM users WHERE name = ?', ['Alice']);
+                addResult(
+                    '位置指定プレースホルダー - SELECT WHERE',
+                    result.rows.length === 1 && result.rows[0].email === 'alice@example.com',
+                    'WHERE 句で位置指定プレースホルダーが正しく動作',
+                    result.rows[0]
+                );
+
+                // Test 3: 名前付きプレースホルダー - INSERT
+                await db.execute(
+                    'INSERT INTO users (id, name, email, age) VALUES (:id, :name, :email, :age)',
+                    { id: 2, name: 'Bob', email: 'bob@example.com', age: 30 }
+                );
+                result = await db.execute('SELECT * FROM users WHERE id = 2');
+                addResult(
+                    '名前付きプレースホルダー - INSERT',
+                    result.rows.length === 1 && result.rows[0].name === 'Bob',
+                    '名前付きプレースホルダー (:name) を使用した INSERT が成功',
+                    result.rows[0]
+                );
+
+                // Test 4: 名前付きプレースホルダー - SELECT WHERE
+                result = await db.execute('SELECT * FROM users WHERE email = :email', { email: 'bob@example.com' });
+                addResult(
+                    '名前付きプレースホルダー - SELECT WHERE',
+                    result.rows.length === 1 && result.rows[0].name === 'Bob',
+                    'WHERE 句で名前付きプレースホルダーが正しく動作',
+                    result.rows[0]
+                );
+
+                // Test 5: 位置指定プレースホルダー - UPDATE
+                await db.execute('UPDATE users SET age = ? WHERE id = ?', [26, 1]);
+                result = await db.execute('SELECT * FROM users WHERE id = 1');
+                addResult(
+                    '位置指定プレースホルダー - UPDATE',
+                    result.rows[0].age === 26,
+                    'UPDATE 文で位置指定プレースホルダーが正しく動作',
+                    result.rows[0]
+                );
+
+                // Test 6: 名前付きプレースホルダー - UPDATE
+                await db.execute('UPDATE users SET age = :age WHERE name = :name', { age: 31, name: 'Bob' });
+                result = await db.execute('SELECT * FROM users WHERE name = :name', { name: 'Bob' });
+                addResult(
+                    '名前付きプレースホルダー - UPDATE',
+                    result.rows[0].age === 31,
+                    'UPDATE 文で名前付きプレースホルダーが正しく動作',
+                    result.rows[0]
+                );
+
+                // Test 7: 複数条件での位置指定プレースホルダー
+                await db.execute('INSERT INTO users (id, name, email, age) VALUES (?, ?, ?, ?)', [3, 'Charlie', 'charlie@example.com', 28]);
+                result = await db.execute('SELECT * FROM users WHERE age > ? AND age < ?', [26, 30]);
+                addResult(
+                    '複数条件での位置指定プレースホルダー',
+                    result.rows.length === 1 && result.rows[0].name === 'Charlie',
+                    'AND 条件で複数の位置指定プレースホルダーが正しく動作',
+                    result.rows
+                );
+
+                // Test 8: 複数条件での名前付きプレースホルダー
+                result = await db.execute('SELECT * FROM users WHERE age > :min AND age < :max', { min: 26, max: 30 });
+                addResult(
+                    '複数条件での名前付きプレースホルダー',
+                    result.rows.length === 1 && result.rows[0].name === 'Charlie',
+                    'AND 条件で複数の名前付きプレースホルダーが正しく動作',
+                    result.rows
+                );
+
+                // Test 9: 位置指定プレースホルダー - DELETE
+                await db.execute('DELETE FROM users WHERE id = ?', [3]);
+                result = await db.execute('SELECT * FROM users WHERE id = 3');
+                addResult(
+                    '位置指定プレースホルダー - DELETE',
+                    result.rows.length === 0,
+                    'DELETE 文で位置指定プレースホルダーが正しく動作',
+                    { deletedRows: 0 }
+                );
+
+                // Test 10: 名前付きプレースホルダー - DELETE
+                await db.execute('INSERT INTO users (id, name, email, age) VALUES (4, :name, :email, :age)', { name: 'David', email: 'david@example.com', age: 35 });
+                await db.execute('DELETE FROM users WHERE name = :name', { name: 'David' });
+                result = await db.execute('SELECT * FROM users WHERE name = :name', { name: 'David' });
+                addResult(
+                    '名前付きプレースホルダー - DELETE',
+                    result.rows.length === 0,
+                    'DELETE 文で名前付きプレースホルダーが正しく動作',
+                    { deletedRows: 0 }
+                );
+
+                // Test 11: LIKE 演算子と位置指定プレースホルダー
+                await db.execute('INSERT INTO users (id, name, email, age) VALUES (?, ?, ?, ?)', [5, 'Eve', 'eve@example.com', 22]);
+                result = await db.execute('SELECT * FROM users WHERE email LIKE ?', ['%@example.com']);
+                addResult(
+                    'LIKE 演算子と位置指定プレースホルダー',
+                    result.rows.length >= 3,
+                    'LIKE 演算子で位置指定プレースホルダーが正しく動作',
+                    { matchCount: result.rows.length }
+                );
+
+                // Test 12: LIKE 演算子と名前付きプレースホルダー
+                result = await db.execute('SELECT * FROM users WHERE name LIKE :pattern', { pattern: '%e%' });
+                addResult(
+                    'LIKE 演算子と名前付きプレースホルダー',
+                    result.rows.length >= 2,
+                    'LIKE 演算子で名前付きプレースホルダーが正しく動作',
+                    { matchCount: result.rows.length, names: result.rows.map(r => r.name) }
+                );
+
+                // Test 13: NULL 値と位置指定プレースホルダー
+                await db.execute('INSERT INTO users (id, name, email, age) VALUES (?, ?, ?, ?)', [6, 'Frank', null, 40]);
+                result = await db.execute('SELECT * FROM users WHERE id = ?', [6]);
+                addResult(
+                    'NULL 値と位置指定プレースホルダー',
+                    result.rows[0].email === null,
+                    'NULL 値を位置指定プレースホルダーで正しく挿入',
+                    result.rows[0]
+                );
+
+                // Test 14: NULL 値と名前付きプレースホルダー
+                await db.execute('INSERT INTO users (id, name, email, age) VALUES (:id, :name, :email, :age)', { id: 7, name: 'Grace', email: null, age: 45 });
+                result = await db.execute('SELECT * FROM users WHERE id = :id', { id: 7 });
+                addResult(
+                    'NULL 値と名前付きプレースホルダー',
+                    result.rows[0].email === null,
+                    'NULL 値を名前付きプレースホルダーで正しく挿入',
+                    result.rows[0]
+                );
+
+                // Test 15: 数値型と位置指定プレースホルダー
+                result = await db.execute('SELECT * FROM users WHERE age = ?', [25]);
+                addResult(
+                    '数値型と位置指定プレースホルダー',
+                    result.rows.length === 0, // Alice の age は 26 に更新済み
+                    '数値型の位置指定プレースホルダーが正しく動作',
+                    { searchAge: 25, foundCount: result.rows.length }
+                );
+
+                // Test 16: 文字列型と名前付きプレースホルダー
+                result = await db.execute('SELECT * FROM users WHERE name = :name', { name: 'Alice' });
+                addResult(
+                    '文字列型と名前付きプレースホルダー',
+                    result.rows.length === 1,
+                    '文字列型の名前付きプレースホルダーが正しく動作',
+                    result.rows[0]
+                );
+
+                // 最終結果
+                const summary = document.createElement('div');
+                summary.className = 'test-section';
+                summary.innerHTML = `
+                    <h2>テスト結果サマリー</h2>
+                    <p>総テスト数: ${testCount}</p>
+                    <p class="success">成功: ${passCount}</p>
+                    <p class="error">失敗: ${failCount}</p>
+                    <p><strong>${failCount === 0 ? 'すべてのテストに合格しました！' : 'いくつかのテストが失敗しました。'}</strong></p>
+                `;
+                results.appendChild(summary);
+
+            } catch (error) {
+                addResult('エラー', false, `テスト実行中にエラーが発生: ${error.message}`);
+                console.error(error);
+            }
+        }
+
+        // ページ読み込み後にテスト実行
+        window.addEventListener('load', runTests);
+    </script>
+</body>
+</html>

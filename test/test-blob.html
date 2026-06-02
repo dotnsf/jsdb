@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JSDB BLOB Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 20px auto;
+            padding: 0 20px;
+        }
+        h1 {
+            color: #333;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .test-section h2 {
+            margin-top: 0;
+            color: #0066cc;
+        }
+        .success {
+            color: green;
+            font-weight: bold;
+        }
+        .error {
+            color: red;
+            font-weight: bold;
+        }
+        pre {
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 3px;
+            overflow-x: auto;
+        }
+        .test-result {
+            margin: 10px 0;
+            padding: 10px;
+            border-left: 4px solid #ddd;
+        }
+        .test-result.pass {
+            border-left-color: green;
+            background: #f0fff0;
+        }
+        .test-result.fail {
+            border-left-color: red;
+            background: #fff0f0;
+        }
+        img {
+            max-width: 200px;
+            margin: 10px 0;
+            border: 1px solid #ddd;
+        }
+    </style>
+</head>
+<body>
+    <h1>JSDB BLOB 型テスト</h1>
+    <div id="results"></div>
+
+    <script src="../jsdb.js"></script>
+    <script>
+        const results = document.getElementById('results');
+        let testCount = 0;
+        let passCount = 0;
+        let failCount = 0;
+
+        function addResult(title, passed, message, data = null) {
+            testCount++;
+            if (passed) passCount++;
+            else failCount++;
+
+            const div = document.createElement('div');
+            div.className = `test-result ${passed ? 'pass' : 'fail'}`;
+            
+            let html = `
+                <strong>${passed ? '✓' : '✗'} Test ${testCount}: ${title}</strong>
+                <p>${message}</p>
+            `;
+            
+            if (data) {
+                if (data.image) {
+                    html += data.image;
+                } else {
+                    html += `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+                }
+            }
+            
+            div.innerHTML = html;
+            results.appendChild(div);
+        }
+
+        // テスト用のバイナリデータを生成
+        function createTestArrayBuffer(size) {
+            const buffer = new ArrayBuffer(size);
+            const view = new Uint8Array(buffer);
+            for (let i = 0; i < size; i++) {
+                view[i] = i % 256;
+            }
+            return buffer;
+        }
+
+        // ArrayBuffer を比較
+        function compareArrayBuffers(buf1, buf2) {
+            if (buf1.byteLength !== buf2.byteLength) return false;
+            const view1 = new Uint8Array(buf1);
+            const view2 = new Uint8Array(buf2);
+            for (let i = 0; i < view1.length; i++) {
+                if (view1[i] !== view2[i]) return false;
+            }
+            return true;
+        }
+
+        // 小さな画像を Base64 から作成
+        function createTestImage() {
+            // 1x1 ピクセルの赤い PNG 画像（Base64）
+            const base64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==';
+            const binary = atob(base64);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) {
+                bytes[i] = binary.charCodeAt(i);
+            }
+            return bytes.buffer;
+        }
+
+        async function runTests() {
+            try {
+                // データベース初期化
+                const db = new JSDB('test_blob_db');
+                await db.execute('CREATE TABLE files (id INTEGER, name TEXT, data BLOB, size INTEGER)');
+
+                // Test 1: ArrayBuffer の挿入と取得
+                const testData1 = createTestArrayBuffer(100);
+                await db.execute(
+                    'INSERT INTO files (id, name, data, size) VALUES (1, ?, ?, ?)',
+                    ['test1.bin', testData1, testData1.byteLength]
+                );
+                let result = await db.execute('SELECT * FROM files WHERE id = 1');
+                const retrieved1 = result.rows[0].data;
+                addResult(
+                    'ArrayBuffer の挿入と取得',
+                    retrieved1 instanceof ArrayBuffer && compareArrayBuffers(testData1, retrieved1),
+                    'ArrayBuffer を正しく保存・取得できた',
+                    { size: retrieved1.byteLength, match: compareArrayBuffers(testData1, retrieved1) }
+                );
+
+                // Test 2: Uint8Array の挿入と取得
+                const testData2 = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+                await db.execute(
+                    'INSERT INTO files (id, name, data, size) VALUES (2, ?, ?, ?)',
+                    ['test2.bin', testData2, testData2.length]
+                );
+                result = await db.execute('SELECT * FROM files WHERE id = 2');
+                const retrieved2 = result.rows[0].data;
+                const view2 = new Uint8Array(retrieved2);
+                addResult(
+                    'Uint8Array の挿入と取得',
+                    retrieved2 instanceof ArrayBuffer && view2.length === 10,
+                    'Uint8Array を ArrayBuffer として正しく保存・取得できた',
+                    { size: view2.length, firstByte: view2[0], lastByte: view2[9] }
+                );
+
+                // Test 3: 画像データの挿入と取得
+                const imageData = createTestImage();
+                await db.execute(
+                    'INSERT INTO files (id, name, data, size) VALUES (3, ?, ?, ?)',
+                    ['test.png', imageData, imageData.byteLength]
+                );
+                result = await db.execute('SELECT * FROM files WHERE id = 3');
+                const retrievedImage = result.rows[0].data;
+                addResult(
+                    '画像データの挿入と取得',
+                    retrievedImage instanceof ArrayBuffer && compareArrayBuffers(imageData, retrievedImage),
+                    'PNG 画像データを正しく保存・取得できた',
+                    { size: retrievedImage.byteLength, match: compareArrayBuffers(imageData, retrievedImage) }
+                );
+
+                // Test 4: Blob オブジェクトの挿入と取得
+                const blobData = new Blob([new Uint8Array([65, 66, 67, 68, 69])], { type: 'text/plain' });
+                await db.execute(
+                    'INSERT INTO files (id, name, data, size) VALUES (4, ?, ?, ?)',
+                    ['test.txt', blobData, 5]
+                );
+                result = await db.execute('SELECT * FROM files WHERE id = 4');
+                const retrievedBlob = result.rows[0].data;
+                const blobView = new Uint8Array(retrievedBlob);
+                addResult(
+                    'Blob オブジェクトの挿入と取得',
+                    retrievedBlob instanceof ArrayBuffer && blobView[0] === 65 && blobView[4] === 69,
+                    'Blob オブジェクトを ArrayBuffer として正しく保存・取得できた',
+                    { size: blobView.length, firstChar: String.fromCharCode(blobView[0]), lastChar: String.fromCharCode(blobView[4]) }
+                );
+
+                // Test 5: 大きなバイナリデータ
+                const largeData = createTestArrayBuffer(10000);
+                await db.execute(
+                    'INSERT INTO files (id, name, data, size) VALUES (5, ?, ?, ?)',
+                    ['large.bin', largeData, largeData.byteLength]
+                );
+                result = await db.execute('SELECT * FROM files WHERE id = 5');
+                const retrievedLarge = result.rows[0].data;
+                addResult(
+                    '大きなバイナリデータ（10KB）',
+                    retrievedLarge instanceof ArrayBuffer && compareArrayBuffers(largeData, retrievedLarge),
+                    '10KB のバイナリデータを正しく保存・取得できた',
+                    { size: retrievedLarge.byteLength }
+                );
+
+                // Test 6: UPDATE で BLOB を更新
+                const updateData = createTestArrayBuffer(50);
+                await db.execute(
+                    'UPDATE files SET data = ?, size = ? WHERE id = ?',
+                    [updateData, updateData.byteLength, 1]
+                );
+                result = await db.execute('SELECT * FROM files WHERE id = 1');
+                const updatedData = result.rows[0].data;
+                addResult(
+                    'UPDATE で BLOB を更新',
+                    updatedData instanceof ArrayBuffer && compareArrayBuffers(updateData, updatedData),
+                    'UPDATE 文で BLOB データを正しく更新できた',
+                    { newSize: updatedData.byteLength }
+                );
+
+                // Test 7: NULL 値の BLOB
+                await db.execute(
+                    'INSERT INTO files (id, name, data, size) VALUES (6, ?, ?, ?)',
+                    ['null.bin', null, 0]
+                );
+                result = await db.execute('SELECT * FROM files WHERE id = 6');
+                addResult(
+                    'NULL 値の BLOB',
+                    result.rows[0].data === null,
+                    'NULL 値を正しく保存・取得できた',
+                    { data: result.rows[0].data }
+                );
+
+                // Test 8: 複数の BLOB を含むレコード
+                const data1 = createTestArrayBuffer(20);
+                const data2 = createTestArrayBuffer(30);
+                await db.execute('CREATE TABLE multi_blobs (id INTEGER, blob1 BLOB, blob2 BLOB)');
+                await db.execute(
+                    'INSERT INTO multi_blobs (id, blob1, blob2) VALUES (?, ?, ?)',
+                    [1, data1, data2]
+                );
+                result = await db.execute('SELECT * FROM multi_blobs WHERE id = 1');
+                const multi1 = result.rows[0].blob1;
+                const multi2 = result.rows[0].blob2;
+                addResult(
+                    '複数の BLOB カラム',
+                    compareArrayBuffers(data1, multi1) && compareArrayBuffers(data2, multi2),
+                    '複数の BLOB カラムを正しく保存・取得できた',
+                    { blob1Size: multi1.byteLength, blob2Size: multi2.byteLength }
+                );
+
+                // Test 9: 名前付きプレースホルダーで BLOB
+                const namedData = createTestArrayBuffer(40);
+                await db.execute(
+                    'INSERT INTO files (id, name, data, size) VALUES (:id, :name, :data, :size)',
+                    { id: 7, name: 'named.bin', data: namedData, size: namedData.byteLength }
+                );
+                result = await db.execute('SELECT * FROM files WHERE id = :id', { id: 7 });
+                const namedRetrieved = result.rows[0].data;
+                addResult(
+                    '名前付きプレースホルダーで BLOB',
+                    compareArrayBuffers(namedData, namedRetrieved),
+                    '名前付きプレースホルダーで BLOB を正しく扱えた',
+                    { size: namedRetrieved.byteLength }
+                );
+
+                // Test 10: SELECT で複数の BLOB レコードを取得
+                result = await db.execute('SELECT id, name, size FROM files WHERE size > 0');
+                addResult(
+                    '複数の BLOB レコードを取得',
+                    result.rows.length >= 6,
+                    `${result.rows.length} 件の BLOB レコードを取得できた`,
+                    { count: result.rows.length, records: result.rows.map(r => ({ id: r.id, name: r.name, size: r.size })) }
+                );
+
+                // 最終結果
+                const summary = document.createElement('div');
+                summary.className = 'test-section';
+                summary.innerHTML = `
+                    <h2>テスト結果サマリー</h2>
+                    <p>総テスト数: ${testCount}</p>
+                    <p class="success">成功: ${passCount}</p>
+                    <p class="error">失敗: ${failCount}</p>
+                    <p><strong>${failCount === 0 ? 'すべてのテストに合格しました！' : 'いくつかのテストが失敗しました。'}</strong></p>
+                `;
+                results.appendChild(summary);
+
+            } catch (error) {
+                addResult('エラー', false, `テスト実行中にエラーが発生: ${error.message}`);
+                console.error(error);
+            }
+        }
+
+        // ページ読み込み後にテスト実行
+        window.addEventListener('load', runTests);
+    </script>
+</body>
+</html>

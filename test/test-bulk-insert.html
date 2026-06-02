@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JSDB バルクインサートテスト</title>
+    <script src="../jsdb.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        h1 {
+            color: #333;
+        }
+        .test-container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .test-result {
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+        .test-pass {
+            background-color: #d4edda;
+            border-left: 4px solid #28a745;
+            color: #155724;
+        }
+        .test-fail {
+            background-color: #f8d7da;
+            border-left: 4px solid #dc3545;
+            color: #721c24;
+        }
+        .test-info {
+            background-color: #d1ecf1;
+            border-left: 4px solid #17a2b8;
+            color: #0c5460;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        pre {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>📦 JSDB バルクインサートテスト</h1>
+    
+    <div class="test-container">
+        <button onclick="runBulkInsertTests()">バルクインサートテストを実行</button>
+        <div id="testResults"></div>
+    </div>
+
+    <script>
+        let db;
+
+        function displayResult(testName, passed, message = '') {
+            const resultsDiv = document.getElementById('testResults');
+            const resultDiv = document.createElement('div');
+            resultDiv.className = `test-result ${passed ? 'test-pass' : 'test-fail'}`;
+            resultDiv.textContent = `${passed ? '✓' : '✗'} ${testName}${message ? ': ' + message : ''}`;
+            resultsDiv.appendChild(resultDiv);
+        }
+
+        function displayInfo(message) {
+            const resultsDiv = document.getElementById('testResults');
+            const infoDiv = document.createElement('div');
+            infoDiv.className = 'test-result test-info';
+            infoDiv.innerHTML = message;
+            resultsDiv.appendChild(infoDiv);
+        }
+
+        async function runBulkInsertTests() {
+            const resultsDiv = document.getElementById('testResults');
+            resultsDiv.innerHTML = '';
+
+            try {
+                // データベースをクリーンアップ
+                if (db) {
+                    db.close();
+                }
+                await JSDB.deleteDatabase('bulk_test_db');
+                
+                displayInfo('バルクインサートテストを開始します...');
+
+                // データベース作成
+                db = new JSDB('bulk_test_db');
+                await db.initialize();
+                displayResult('データベース作成', true);
+
+                // テーブル作成
+                await db.execute('CREATE TABLE users (id INTEGER, name TEXT, age INTEGER, email TEXT)');
+                displayResult('テーブル作成', true);
+
+                // テスト1: 単一行インサート（従来の方法）
+                const startSingle = performance.now();
+                await db.execute("INSERT INTO users (id, name, age, email) VALUES (1, 'Alice', 25, 'alice@example.com')");
+                const endSingle = performance.now();
+                displayResult('単一行インサート', true, `${(endSingle - startSingle).toFixed(2)}ms`);
+
+                // テスト2: バルクインサート（3行）
+                const startBulk3 = performance.now();
+                const result3 = await db.execute(`
+                    INSERT INTO users (id, name, age, email) VALUES 
+                    (2, 'Bob', 30, 'bob@example.com'),
+                    (3, 'Charlie', 22, 'charlie@example.com'),
+                    (4, 'David', 28, 'david@example.com')
+                `);
+                const endBulk3 = performance.now();
+                displayResult('バルクインサート（3行）', result3.rowCount === 3, 
+                    `${result3.rowCount}件挿入, ${(endBulk3 - startBulk3).toFixed(2)}ms`);
+
+                // テスト3: バルクインサート（5行）
+                const startBulk5 = performance.now();
+                const result5 = await db.execute(`
+                    INSERT INTO users (id, name, age, email) VALUES 
+                    (5, 'Eve', 26, 'eve@example.com'),
+                    (6, 'Frank', 35, 'frank@example.com'),
+                    (7, 'Grace', 29, 'grace@example.com'),
+                    (8, 'Henry', 31, 'henry@example.com'),
+                    (9, 'Ivy', 24, 'ivy@example.com')
+                `);
+                const endBulk5 = performance.now();
+                displayResult('バルクインサート（5行）', result5.rowCount === 5, 
+                    `${result5.rowCount}件挿入, ${(endBulk5 - startBulk5).toFixed(2)}ms`);
+
+                // テスト4: データ確認
+                const allUsers = await db.execute('SELECT * FROM users');
+                displayResult('全データ取得', allUsers.rowCount === 9, `${allUsers.rowCount}件`);
+                displayInfo(`<pre>${JSON.stringify(allUsers.rows.slice(0, 3), null, 2)}</pre>`);
+
+                // テスト5: バルクインサート（10行）
+                const startBulk10 = performance.now();
+                const result10 = await db.execute(`
+                    INSERT INTO users (id, name, age, email) VALUES 
+                    (10, 'Jack', 27, 'jack@example.com'),
+                    (11, 'Kate', 23, 'kate@example.com'),
+                    (12, 'Leo', 32, 'leo@example.com'),
+                    (13, 'Mia', 28, 'mia@example.com'),
+                    (14, 'Noah', 26, 'noah@example.com'),
+                    (15, 'Olivia', 30, 'olivia@example.com'),
+                    (16, 'Paul', 34, 'paul@example.com'),
+                    (17, 'Quinn', 25, 'quinn@example.com'),
+                    (18, 'Rose', 29, 'rose@example.com'),
+                    (19, 'Sam', 31, 'sam@example.com')
+                `);
+                const endBulk10 = performance.now();
+                displayResult('バルクインサート（10行）', result10.rowCount === 10, 
+                    `${result10.rowCount}件挿入, ${(endBulk10 - startBulk10).toFixed(2)}ms`);
+
+                // テスト6: 最終データ確認
+                const finalUsers = await db.execute('SELECT * FROM users');
+                displayResult('最終データ確認', finalUsers.rowCount === 19, `合計${finalUsers.rowCount}件`);
+
+                // テスト7: NULL値を含むバルクインサート
+                await db.execute('CREATE TABLE products (id INTEGER, name TEXT, price REAL, description TEXT)');
+                const resultNull = await db.execute(`
+                    INSERT INTO products (id, name, price, description) VALUES 
+                    (1, 'Product A', 100.5, 'Description A'),
+                    (2, 'Product B', NULL, 'Description B'),
+                    (3, 'Product C', 200.0, NULL)
+                `);
+                displayResult('NULL値を含むバルクインサート', resultNull.rowCount === 3, `${resultNull.rowCount}件挿入`);
+
+                // テスト8: 様々なデータ型のバルクインサート
+                await db.execute('CREATE TABLE mixed (id INTEGER, name TEXT, score REAL, active INTEGER)');
+                const resultMixed = await db.execute(`
+                    INSERT INTO mixed (id, name, score, active) VALUES 
+                    (1, 'Test1', 95.5, 1),
+                    (2, 'Test2', 87.3, 0),
+                    (3, 'Test3', 92.1, 1)
+                `);
+                displayResult('様々なデータ型のバルクインサート', resultMixed.rowCount === 3, `${resultMixed.rowCount}件挿入`);
+
+                // パフォーマンス比較
+                displayInfo('<strong>📊 パフォーマンス比較</strong>');
+                displayInfo(`単一行インサート: ${(endSingle - startSingle).toFixed(2)}ms`);
+                displayInfo(`バルクインサート（3行）: ${(endBulk3 - startBulk3).toFixed(2)}ms (1行あたり ${((endBulk3 - startBulk3) / 3).toFixed(2)}ms)`);
+                displayInfo(`バルクインサート（5行）: ${(endBulk5 - startBulk5).toFixed(2)}ms (1行あたり ${((endBulk5 - startBulk5) / 5).toFixed(2)}ms)`);
+                displayInfo(`バルクインサート（10行）: ${(endBulk10 - startBulk10).toFixed(2)}ms (1行あたり ${((endBulk10 - startBulk10) / 10).toFixed(2)}ms)`);
+
+                displayInfo('<strong>✅ すべてのバルクインサートテストが完了しました</strong>');
+
+            } catch (error) {
+                displayResult('テスト実行エラー', false, error.message);
+                console.error(error);
+            }
+        }
+    </script>
+</body>
+</html>

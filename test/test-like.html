@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JSDB LIKE演算子テスト</title>
+    <script src="../jsdb.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        h1 {
+            color: #333;
+        }
+        .test-container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .test-result {
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+        .test-pass {
+            background-color: #d4edda;
+            border-left: 4px solid #28a745;
+            color: #155724;
+        }
+        .test-fail {
+            background-color: #f8d7da;
+            border-left: 4px solid #dc3545;
+            color: #721c24;
+        }
+        .test-info {
+            background-color: #d1ecf1;
+            border-left: 4px solid #17a2b8;
+            color: #0c5460;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        pre {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔍 JSDB LIKE演算子テスト</h1>
+    
+    <div class="test-container">
+        <button onclick="runLikeTests()">LIKE演算子テストを実行</button>
+        <div id="testResults"></div>
+    </div>
+
+    <script>
+        let db;
+
+        function displayResult(testName, passed, message = '') {
+            const resultsDiv = document.getElementById('testResults');
+            const resultDiv = document.createElement('div');
+            resultDiv.className = `test-result ${passed ? 'test-pass' : 'test-fail'}`;
+            resultDiv.textContent = `${passed ? '✓' : '✗'} ${testName}${message ? ': ' + message : ''}`;
+            resultsDiv.appendChild(resultDiv);
+        }
+
+        function displayInfo(message) {
+            const resultsDiv = document.getElementById('testResults');
+            const infoDiv = document.createElement('div');
+            infoDiv.className = 'test-result test-info';
+            infoDiv.innerHTML = message;
+            resultsDiv.appendChild(infoDiv);
+        }
+
+        async function runLikeTests() {
+            const resultsDiv = document.getElementById('testResults');
+            resultsDiv.innerHTML = '';
+
+            try {
+                // データベースをクリーンアップ
+                if (db) {
+                    db.close();
+                }
+                await JSDB.deleteDatabase('like_test_db');
+                
+                displayInfo('LIKE演算子テストを開始します...');
+
+                // データベース作成
+                db = new JSDB('like_test_db');
+                await db.initialize();
+                displayResult('データベース作成', true);
+
+                // テーブル作成
+                await db.execute('CREATE TABLE products (id INTEGER, name TEXT, category TEXT, description TEXT)');
+                displayResult('テーブル作成', true);
+
+                // テストデータ挿入
+                await db.execute("INSERT INTO products (id, name, category, description) VALUES (1, 'Apple iPhone', 'Electronics', 'Smartphone with advanced features')");
+                await db.execute("INSERT INTO products (id, name, category, description) VALUES (2, 'Samsung Galaxy', 'Electronics', 'Android smartphone')");
+                await db.execute("INSERT INTO products (id, name, category, description) VALUES (3, 'Apple MacBook', 'Computers', 'Laptop computer')");
+                await db.execute("INSERT INTO products (id, name, category, description) VALUES (4, 'Dell XPS', 'Computers', 'High-performance laptop')");
+                await db.execute("INSERT INTO products (id, name, category, description) VALUES (5, 'Apple Watch', 'Wearables', 'Smartwatch')");
+                displayResult('テストデータ挿入', true, '5件');
+
+                // テスト1: 前方一致（A%）
+                const test1 = await db.execute("SELECT * FROM products WHERE name LIKE 'Apple%'");
+                displayResult('前方一致（Apple%）', test1.rowCount === 3, `${test1.rowCount}件取得`);
+                displayInfo(`<pre>${JSON.stringify(test1.rows.map(r => r.name), null, 2)}</pre>`);
+
+                // テスト2: 後方一致（%phone）
+                const test2 = await db.execute("SELECT * FROM products WHERE name LIKE '%phone'");
+                displayResult('後方一致（%phone）', test2.rowCount === 1, `${test2.rowCount}件取得`);
+
+                // テスト3: 部分一致（%Galaxy%）
+                const test3 = await db.execute("SELECT * FROM products WHERE name LIKE '%Galaxy%'");
+                displayResult('部分一致（%Galaxy%）', test3.rowCount === 1 && test3.rows[0].name === 'Samsung Galaxy');
+
+                // テスト4: 複数の単語を含む（%smart%）
+                const test4 = await db.execute("SELECT * FROM products WHERE description LIKE '%smart%'");
+                displayResult('部分一致（%smart%）', test4.rowCount === 3, `${test4.rowCount}件取得`);
+
+                // テスト5: 大文字小文字を区別しない
+                const test5 = await db.execute("SELECT * FROM products WHERE name LIKE '%APPLE%'");
+                displayResult('大文字小文字を区別しない（%APPLE%）', test5.rowCount === 3, `${test5.rowCount}件取得`);
+
+                // テスト6: 1文字ワイルドカード（_）
+                const test6 = await db.execute("SELECT * FROM products WHERE name LIKE 'Apple _____'");
+                displayResult('1文字ワイルドカード（Apple _____）', test6.rowCount === 1, `${test6.rowCount}件取得`);
+
+                // テスト7: AND条件との組み合わせ
+                const test7 = await db.execute("SELECT * FROM products WHERE name LIKE 'Apple%' AND category = 'Electronics'");
+                displayResult('LIKE + AND条件', test7.rowCount === 1 && test7.rows[0].name === 'Apple iPhone');
+
+                // テスト8: OR条件との組み合わせ
+                const test8 = await db.execute("SELECT * FROM products WHERE name LIKE '%Book' OR name LIKE '%Watch'");
+                displayResult('LIKE + OR条件', test8.rowCount === 2, `${test8.rowCount}件取得`);
+
+                // テスト9: 複数のLIKE条件
+                const test9 = await db.execute("SELECT * FROM products WHERE name LIKE '%Apple%' AND description LIKE '%Laptop%'");
+                displayResult('複数のLIKE条件', test9.rowCount === 1 && test9.rows[0].name === 'Apple MacBook');
+
+                // テスト10: マッチしないパターン
+                const test10 = await db.execute("SELECT * FROM products WHERE name LIKE '%Sony%'");
+                displayResult('マッチしないパターン', test10.rowCount === 0, '0件（正常）');
+
+                // テスト11: 空文字列パターン
+                const test11 = await db.execute("SELECT * FROM products WHERE name LIKE '%%'");
+                displayResult('空文字列パターン（%%）', test11.rowCount === 5, `全件取得: ${test11.rowCount}件`);
+
+                // テスト12: UPDATE with LIKE
+                await db.execute("UPDATE products SET category = 'Apple Products' WHERE name LIKE 'Apple%'");
+                const test12 = await db.execute("SELECT * FROM products WHERE category = 'Apple Products'");
+                displayResult('UPDATE with LIKE', test12.rowCount === 3, `${test12.rowCount}件更新`);
+
+                // テスト13: DELETE with LIKE
+                await db.execute("DELETE FROM products WHERE name LIKE '%XPS%'");
+                const test13 = await db.execute("SELECT * FROM products");
+                displayResult('DELETE with LIKE', test13.rowCount === 4, `残り${test13.rowCount}件`);
+
+                displayInfo('<strong>✅ すべてのLIKE演算子テストが完了しました</strong>');
+
+            } catch (error) {
+                displayResult('テスト実行エラー', false, error.message);
+                console.error(error);
+            }
+        }
+    </script>
+</body>
+</html>
