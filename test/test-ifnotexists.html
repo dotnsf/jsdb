@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JSDB - CREATE TABLE IF NOT EXISTS Test</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        .test-section {
+            background: white;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .test-title {
+            font-size: 18px;
+            font-weight: bold;
+            color: #2196F3;
+            margin-bottom: 10px;
+        }
+        .success {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+        .error {
+            color: #f44336;
+            font-weight: bold;
+        }
+        .sql-code {
+            background: #f5f5f5;
+            padding: 10px;
+            border-left: 4px solid #2196F3;
+            margin: 10px 0;
+            font-family: 'Courier New', monospace;
+            white-space: pre-wrap;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .result {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .result.success {
+            background-color: #e8f5e9;
+            border: 1px solid #4CAF50;
+        }
+        .result.error {
+            background-color: #ffebee;
+            border: 1px solid #f44336;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #2196F3;
+            color: white;
+        }
+        tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 JSDB - CREATE TABLE IF NOT EXISTS Test</h1>
+    
+    <div class="test-section">
+        <button onclick="runAllTests()">すべてのテストを実行</button>
+        <button onclick="clearDatabase()">データベースをクリア</button>
+    </div>
+
+    <div class="test-section">
+        <div class="test-title">Test 1: CREATE TABLE IF NOT EXISTS（テーブルが存在しない場合）</div>
+        <div class="sql-code">CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY,
+    name TEXT,
+    email TEXT
+)</div>
+        <button onclick="runTest1()">Test 1 実行</button>
+        <div id="result1"></div>
+    </div>
+
+    <div class="test-section">
+        <div class="test-title">Test 2: データを挿入</div>
+        <div class="sql-code">INSERT INTO users (id, name, email) VALUES (1, 'Alice', 'alice@example.com')</div>
+        <button onclick="runTest2()">Test 2 実行</button>
+        <div id="result2"></div>
+    </div>
+
+    <div class="test-section">
+        <div class="test-title">Test 3: CREATE TABLE IF NOT EXISTS（テーブルが既に存在する場合）</div>
+        <div class="sql-code">CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY,
+    name TEXT,
+    email TEXT
+)</div>
+        <button onclick="runTest3()">Test 3 実行</button>
+        <div id="result3"></div>
+    </div>
+
+    <div class="test-section">
+        <div class="test-title">Test 4: データが保持されているか確認</div>
+        <div class="sql-code">SELECT * FROM users</div>
+        <button onclick="runTest4()">Test 4 実行</button>
+        <div id="result4"></div>
+    </div>
+
+    <div class="test-section">
+        <div class="test-title">Test 5: CREATE TABLE（IF NOT EXISTSなし、テーブルが存在する場合）</div>
+        <div class="sql-code">CREATE TABLE users (
+    id INTEGER PRIMARY KEY,
+    name TEXT,
+    email TEXT
+)</div>
+        <button onclick="runTest5()">Test 5 実行</button>
+        <div id="result5"></div>
+    </div>
+
+    <div class="test-section">
+        <div class="test-title">Test 6: 別のテーブルでIF NOT EXISTSをテスト</div>
+        <div class="sql-code">CREATE TABLE IF NOT EXISTS products (
+    id INTEGER PRIMARY KEY,
+    name TEXT,
+    price REAL
+)
+INSERT INTO products (id, name, price) VALUES (1, 'Laptop', 999.99)
+CREATE TABLE IF NOT EXISTS products (id INTEGER, name TEXT, price REAL)
+SELECT * FROM products</div>
+        <button onclick="runTest6()">Test 6 実行</button>
+        <div id="result6"></div>
+    </div>
+
+    <script src="../jsdb.js"></script>
+    <script>
+        let db;
+
+        async function initDB() {
+            db = new JSDB('test_ifnotexists_db');
+        }
+
+        async function clearDatabase() {
+            if (db) {
+                await db.close();
+            }
+            
+            // IndexedDBからデータベースを削除
+            const deleteRequest = indexedDB.deleteDatabase('test_ifnotexists_db');
+            
+            deleteRequest.onsuccess = async function() {
+                console.log('Database deleted successfully');
+                alert('データベースをクリアしました');
+                
+                // 再初期化
+                await initDB();
+                
+                // すべての結果をクリア
+                for (let i = 1; i <= 6; i++) {
+                    document.getElementById(`result${i}`).innerHTML = '';
+                }
+            };
+            
+            deleteRequest.onerror = function() {
+                console.error('Error deleting database');
+                alert('データベースのクリアに失敗しました');
+            };
+        }
+
+        async function runTest1() {
+            const resultDiv = document.getElementById('result1');
+            try {
+                const sql = `CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY,
+                    name TEXT,
+                    email TEXT
+                )`;
+                const result = await db.execute(sql);
+                
+                resultDiv.className = 'result success';
+                resultDiv.innerHTML = `
+                    <div class="success">✓ Test 1 成功</div>
+                    <div>メッセージ: ${result.message}</div>
+                    <div>テーブルが正常に作成されました</div>
+                `;
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `
+                    <div class="error">✗ Test 1 失敗</div>
+                    <div>エラー: ${error.message}</div>
+                `;
+            }
+        }
+
+        async function runTest2() {
+            const resultDiv = document.getElementById('result2');
+            try {
+                const sql = `INSERT INTO users (id, name, email) VALUES (1, 'Alice', 'alice@example.com')`;
+                const result = await db.execute(sql);
+                
+                resultDiv.className = 'result success';
+                resultDiv.innerHTML = `
+                    <div class="success">✓ Test 2 成功</div>
+                    <div>メッセージ: ${result.message}</div>
+                    <div>データが正常に挿入されました</div>
+                `;
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `
+                    <div class="error">✗ Test 2 失敗</div>
+                    <div>エラー: ${error.message}</div>
+                `;
+            }
+        }
+
+        async function runTest3() {
+            const resultDiv = document.getElementById('result3');
+            try {
+                const sql = `CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY,
+                    name TEXT,
+                    email TEXT
+                )`;
+                const result = await db.execute(sql);
+                
+                resultDiv.className = 'result success';
+                resultDiv.innerHTML = `
+                    <div class="success">✓ Test 3 成功</div>
+                    <div>メッセージ: ${result.message}</div>
+                    <div>テーブルが既に存在するため、スキップされました</div>
+                `;
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `
+                    <div class="error">✗ Test 3 失敗</div>
+                    <div>エラー: ${error.message}</div>
+                `;
+            }
+        }
+
+        async function runTest4() {
+            const resultDiv = document.getElementById('result4');
+            try {
+                const sql = `SELECT * FROM users`;
+                const result = await db.execute(sql);
+                
+                if (result.rows && result.rows.length === 1 && result.rows[0].name === 'Alice') {
+                    let tableHTML = '<table><tr>';
+                    // columnsが存在しない場合は、最初の行のキーを使用
+                    const columns = result.columns || Object.keys(result.rows[0]);
+                    for (let col of columns) {
+                        tableHTML += `<th>${col}</th>`;
+                    }
+                    tableHTML += '</tr>';
+                    
+                    for (let row of result.rows) {
+                        tableHTML += '<tr>';
+                        for (let col of columns) {
+                            tableHTML += `<td>${row[col]}</td>`;
+                        }
+                        tableHTML += '</tr>';
+                    }
+                    tableHTML += '</table>';
+                    
+                    resultDiv.className = 'result success';
+                    resultDiv.innerHTML = `
+                        <div class="success">✓ Test 4 成功</div>
+                        <div>データが正常に保持されています</div>
+                        ${tableHTML}
+                    `;
+                } else {
+                    resultDiv.className = 'result error';
+                    resultDiv.innerHTML = `
+                        <div class="error">✗ Test 4 失敗</div>
+                        <div>データが正しく保持されていません</div>
+                        <div>結果: ${JSON.stringify(result)}</div>
+                    `;
+                }
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `
+                    <div class="error">✗ Test 4 失敗</div>
+                    <div>エラー: ${error.message}</div>
+                `;
+            }
+        }
+
+        async function runTest5() {
+            const resultDiv = document.getElementById('result5');
+            try {
+                const sql = `CREATE TABLE users (
+                    id INTEGER PRIMARY KEY,
+                    name TEXT,
+                    email TEXT
+                )`;
+                const result = await db.execute(sql);
+                
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `
+                    <div class="error">✗ Test 5 失敗</div>
+                    <div>エラーが発生すべきでしたが、成功してしまいました</div>
+                `;
+            } catch (error) {
+                if (error.message.includes('already exists')) {
+                    resultDiv.className = 'result success';
+                    resultDiv.innerHTML = `
+                        <div class="success">✓ Test 5 成功</div>
+                        <div>期待通りエラーが発生しました: ${error.message}</div>
+                    `;
+                } else {
+                    resultDiv.className = 'result error';
+                    resultDiv.innerHTML = `
+                        <div class="error">✗ Test 5 失敗</div>
+                        <div>予期しないエラー: ${error.message}</div>
+                    `;
+                }
+            }
+        }
+
+        async function runTest6() {
+            const resultDiv = document.getElementById('result6');
+            try {
+                // 最初のCREATE TABLE IF NOT EXISTS
+                let sql = `CREATE TABLE IF NOT EXISTS products (
+                    id INTEGER PRIMARY KEY,
+                    name TEXT,
+                    price REAL
+                )`;
+                let result = await db.execute(sql);
+                let output = `<div>1. テーブル作成: ${result.message}</div>`;
+                
+                // データ挿入
+                sql = `INSERT INTO products (id, name, price) VALUES (1, 'Laptop', 999.99)`;
+                result = await db.execute(sql);
+                output += `<div>2. データ挿入: ${result.message}</div>`;
+                
+                // 2回目のCREATE TABLE IF NOT EXISTS
+                sql = `CREATE TABLE IF NOT EXISTS products (
+                    id INTEGER,
+                    name TEXT,
+                    price REAL
+                )`;
+                result = await db.execute(sql);
+                output += `<div>3. 2回目のテーブル作成: ${result.message}</div>`;
+                
+                // データ確認
+                sql = `SELECT * FROM products`;
+                result = await db.execute(sql);
+                
+                if (result.rows && result.rows.length === 1 && result.rows[0].name === 'Laptop') {
+                    let tableHTML = '<table><tr>';
+                    // columnsが存在しない場合は、最初の行のキーを使用
+                    const columns = result.columns || Object.keys(result.rows[0]);
+                    for (let col of columns) {
+                        tableHTML += `<th>${col}</th>`;
+                    }
+                    tableHTML += '</tr>';
+                    
+                    for (let row of result.rows) {
+                        tableHTML += '<tr>';
+                        for (let col of columns) {
+                            tableHTML += `<td>${row[col]}</td>`;
+                        }
+                        tableHTML += '</tr>';
+                    }
+                    tableHTML += '</table>';
+                    
+                    resultDiv.className = 'result success';
+                    resultDiv.innerHTML = `
+                        <div class="success">✓ Test 6 成功</div>
+                        ${output}
+                        <div>4. データが正常に保持されています</div>
+                        ${tableHTML}
+                    `;
+                } else {
+                    resultDiv.className = 'result error';
+                    resultDiv.innerHTML = `
+                        <div class="error">✗ Test 6 失敗</div>
+                        ${output}
+                        <div>データが正しく保持されていません</div>
+                        <div>結果: ${JSON.stringify(result)}</div>
+                    `;
+                }
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `
+                    <div class="error">✗ Test 6 失敗</div>
+                    <div>エラー: ${error.message}</div>
+                `;
+            }
+        }
+
+        async function runAllTests() {
+            try {
+                // データベースをクリアしてから全テストを実行
+                if (db) {
+                    await db.close();
+                }
+                
+                // データベース削除をPromiseでラップ
+                await new Promise((resolve, reject) => {
+                    const deleteRequest = indexedDB.deleteDatabase('test_ifnotexists_db');
+                    
+                    deleteRequest.onsuccess = function() {
+                        console.log('Database cleared for testing');
+                        resolve();
+                    };
+                    
+                    deleteRequest.onerror = function() {
+                        console.error('Error clearing database for testing');
+                        reject(new Error('データベースのクリアに失敗しました'));
+                    };
+                    
+                    deleteRequest.onblocked = function() {
+                        console.warn('Database deletion blocked');
+                        // ブロックされた場合も続行
+                        resolve();
+                    };
+                });
+                
+                // データベースを再初期化
+                await initDB();
+                
+                // 少し待機してから開始
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                // すべてのテストを順番に実行
+                await runTest1();
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                await runTest2();
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                await runTest3();
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                await runTest4();
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                await runTest5();
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                await runTest6();
+                
+                console.log('All tests completed');
+            } catch (error) {
+                console.error('Error running tests:', error);
+                alert('テストの実行中にエラーが発生しました: ' + error.message);
+            }
+        }
+
+        // ページ読み込み時にDBを初期化
+        window.addEventListener('load', async () => {
+            await initDB();
+            console.log('Database initialized');
+        });
+    </script>
+</body>
+</html>

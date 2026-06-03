@@ -1,4 +1,457 @@
-﻿/**
+/**
+ * ヘルパー関数
+ */
+
+/**
+ * データ型を検証
+ */
+function validateDataType(value, type) {
+    switch (type.toUpperCase()) {
+        case 'INTEGER':
+            return Number.isInteger(value);
+        case 'REAL':
+            return typeof value === 'number';
+        case 'TEXT':
+            return typeof value === 'string';
+        case 'BLOB':
+            return value instanceof Blob ||
+                   value instanceof ArrayBuffer ||
+                   value instanceof Uint8Array ||
+                   ArrayBuffer.isView(value);
+        case 'DATE':
+        case 'DATETIME':
+            return value instanceof Date || !isNaN(Date.parse(value));
+        default:
+            return true; // 不明な型は許可
+    }
+}
+
+/**
+ * データ型に変換
+ */
+function convertToDataType(value, type) {
+    if (value === null || value === undefined) {
+        return null;
+    }
+
+    switch (type.toUpperCase()) {
+        case 'INTEGER':
+            return parseInt(value, 10);
+        case 'REAL':
+            return parseFloat(value);
+        case 'TEXT':
+            return String(value);
+        case 'BLOB':
+            return convertToArrayBuffer(value);
+        case 'DATE':
+        case 'DATETIME':
+            return new Date(value);
+        default:
+            return value;
+    }
+}
+
+/**
+ * バイナリデータを ArrayBuffer に変換
+ */
+async function convertToArrayBuffer(value) {
+    if (value instanceof ArrayBuffer) {
+        return value;
+    }
+    if (value instanceof Uint8Array || ArrayBuffer.isView(value)) {
+        return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
+    }
+    if (value instanceof Blob) {
+        return await value.arrayBuffer();
+    }
+    throw new Error('Unsupported BLOB data type');
+}
+
+/**
+ * バイナリデータを同期的に ArrayBuffer に変換（プレースホルダー用）
+ */
+function convertToArrayBufferSync(value) {
+    if (value instanceof ArrayBuffer) {
+        return value;
+    }
+    if (value instanceof Uint8Array || ArrayBuffer.isView(value)) {
+        return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
+    }
+    // Blob は非同期なので、そのまま返す（後で Executor で処理）
+    if (value instanceof Blob) {
+        return value;
+    }
+    throw new Error('Unsupported BLOB data type');
+}
+
+/**
+ * 値を比較
+ */
+function compareValues(left, operator, right) {
+    // NULL チェック
+    if (left === null || left === undefined || right === null || right === undefined) {
+        if (operator === '=' || operator === '==') {
+            return left === right;
+        } else if (operator === '!=' || operator === '<>') {
+            return left !== right;
+        }
+        return false;
+    }
+
+    // 日付型の比較（Date オブジェクトの場合）
+    if (left instanceof Date || right instanceof Date) {
+        const leftTime = left instanceof Date ? left.getTime() : new Date(left).getTime();
+        const rightTime = right instanceof Date ? right.getTime() : new Date(right).getTime();
+        
+        switch (operator) {
+            case '=':
+            case '==':
+                return leftTime === rightTime;
+            case '!=':
+            case '<>':
+                return leftTime !== rightTime;
+            case '>':
+                return leftTime > rightTime;
+            case '<':
+                return leftTime < rightTime;
+            case '>=':
+                return leftTime >= rightTime;
+            case '<=':
+                return leftTime <= rightTime;
+            default:
+                throw new Error(`Unknown operator: ${operator}`);
+        }
+    }
+
+    switch (operator) {
+        case '=':
+        case '==':
+            return left == right;
+        case '!=':
+        case '<>':
+            return left != right;
+        case '>':
+            return left > right;
+        case '<':
+            return left < right;
+        case '>=':
+            return left >= right;
+        case '<=':
+            return left <= right;
+        default:
+            throw new Error(`Unknown operator: ${operator}`);
+    }
+}
+
+/**
+ * LIKE パターンマッチング
+ */
+function matchLike(value, pattern) {
+    if (value === null || value === undefined) {
+        return false;
+    }
+    
+    // 値を文字列に変換
+    const str = String(value);
+    
+    // SQL の LIKE パターンを正規表現に変換
+    // % は .* (任意の文字列)、_ は . (任意の1文字) に変換
+    const regexPattern = pattern
+        .replace(/[.*+?^${}()|[\]\\]/g, '\\$&') // 特殊文字をエスケープ
+        .replace(/%/g, '.*')  // % を .* に変換
+        .replace(/_/g, '.');  // _ を . に変換
+    
+    const regex = new RegExp('^' + regexPattern + '$', 'i'); // 大文字小文字を区別しない
+    return regex.test(str);
+}
+
+/**
+ * WHERE 条件を評価
+ */
+function evaluateWhereCondition(row, condition) {
+    if (!condition) {
+        return true;
+    }
+
+    // 論理演算子の処理
+    if (condition.type === 'AND') {
+        return evaluateWhereCondition(row, condition.left) &&
+               evaluateWhereCondition(row, condition.right);
+    }
+    if (condition.type === 'OR') {
+        return evaluateWhereCondition(row, condition.left) ||
+               evaluateWhereCondition(row, condition.right);
+    }
+
+    // LIKE 演算の処理
+    if (condition.type === 'LIKE') {
+        const leftValue = row[condition.left];
+        const pattern = condition.pattern;
+        return matchLike(leftValue, pattern);
+    }
+
+    // 比較演算の処理
+    if (condition.type === 'COMPARISON') {
+        const leftValue = row[condition.left];
+        const rightValue = condition.right;
+        return compareValues(leftValue, condition.operator, rightValue);
+    }
+
+    return true;
+}
+
+/**
+ * エラーメッセージを生成
+ */
+function createError(message, details = null) {
+    const error = new Error(message);
+    if (details) {
+        error.details = details;
+    }
+    return error;
+}
+/**
+ * IndexedDBManager - IndexedDB の操作を管理するクラス
+ */
+class IndexedDBManager {
+    constructor(dbName) {
+        this.dbName = dbName;
+        this.db = null;
+        this.version = null;
+    }
+
+    /**
+     * データベースを開く
+     */
+    async open() {
+        return new Promise((resolve, reject) => {
+            // まず現在のバージョンを取得
+            const openRequest = indexedDB.open(this.dbName);
+            
+            openRequest.onsuccess = () => {
+                const db = openRequest.result;
+                this.version = db.version;
+                db.close();
+                
+                // 正しいバージョンで再オープン
+                const request = indexedDB.open(this.dbName, this.version);
+
+                request.onerror = () => {
+                    reject(new Error(`Failed to open database: ${request.error}`));
+                };
+
+                request.onsuccess = () => {
+                    this.db = request.result;
+                    resolve(this.db);
+                };
+
+                request.onupgradeneeded = (event) => {
+                    this.db = event.target.result;
+                    
+                    if (!this.db.objectStoreNames.contains('__metadata__')) {
+                        this.db.createObjectStore('__metadata__', { keyPath: 'key' });
+                    }
+                };
+            };
+            
+            openRequest.onerror = () => {
+                // データベースが存在しない場合は新規作成
+                this.version = 1;
+                const request = indexedDB.open(this.dbName, this.version);
+
+                request.onerror = () => {
+                    reject(new Error(`Failed to open database: ${request.error}`));
+                };
+
+                request.onsuccess = () => {
+                    this.db = request.result;
+                    resolve(this.db);
+                };
+
+                request.onupgradeneeded = (event) => {
+                    this.db = event.target.result;
+                    
+                    if (!this.db.objectStoreNames.contains('__metadata__')) {
+                        this.db.createObjectStore('__metadata__', { keyPath: 'key' });
+                    }
+                };
+            };
+        });
+    }
+
+    /**
+     * テーブル（オブジェクトストア）を作成
+     */
+    async createTable(tableName, columns) {
+        // バージョンを上げて再オープン
+        this.version++;
+        this.db.close();
+
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(this.dbName, this.version);
+
+            request.onerror = () => {
+                reject(new Error(`Failed to create table: ${request.error}`));
+            };
+
+            request.onsuccess = () => {
+                this.db = request.result;
+                resolve();
+            };
+
+            request.onupgradeneeded = (event) => {
+                const db = event.target.result;
+
+                // テーブルストアを作成
+                if (!db.objectStoreNames.contains(tableName)) {
+                    db.createObjectStore(tableName, { keyPath: '__id__', autoIncrement: true });
+                }
+
+                // メタデータストアが存在しない場合は作成
+                if (!db.objectStoreNames.contains('__metadata__')) {
+                    db.createObjectStore('__metadata__', { keyPath: 'key' });
+                }
+            };
+        });
+    }
+
+    /**
+     * テーブルのスキーマ情報を保存
+     */
+    async saveTableSchema(tableName, columns, primaryKey = null) {
+        const transaction = this.db.transaction(['__metadata__'], 'readwrite');
+        const store = transaction.objectStore('__metadata__');
+
+        return new Promise((resolve, reject) => {
+            const request = store.put({
+                key: `schema_${tableName}`,
+                tableName: tableName,
+                columns: columns,
+                primaryKey: primaryKey
+            });
+
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(new Error(`Failed to save schema: ${request.error}`));
+        });
+    }
+
+    /**
+     * テーブルのPRIMARY KEY情報を取得
+     */
+    async getTablePrimaryKey(tableName) {
+        const transaction = this.db.transaction(['__metadata__'], 'readonly');
+        const store = transaction.objectStore('__metadata__');
+
+        return new Promise((resolve, reject) => {
+            const request = store.get(`schema_${tableName}`);
+
+            request.onsuccess = () => {
+                const result = request.result;
+                resolve(result ? result.primaryKey : null);
+            };
+            request.onerror = () => reject(new Error(`Failed to get primary key: ${request.error}`));
+        });
+    }
+
+    /**
+     * テーブルのスキーマ情報を取得
+     */
+    async getTableSchema(tableName) {
+        const transaction = this.db.transaction(['__metadata__'], 'readonly');
+        const store = transaction.objectStore('__metadata__');
+
+        return new Promise((resolve, reject) => {
+            const request = store.get(`schema_${tableName}`);
+
+            request.onsuccess = () => {
+                if (request.result) {
+                    resolve(request.result.columns);
+                } else {
+                    resolve(null);
+                }
+            };
+            request.onerror = () => reject(new Error(`Failed to get schema: ${request.error}`));
+        });
+    }
+
+    /**
+     * テーブルが存在するかチェック
+     */
+    tableExists(tableName) {
+        return this.db.objectStoreNames.contains(tableName);
+    }
+
+    /**
+     * データを挿入
+     */
+    async insert(tableName, data) {
+        const transaction = this.db.transaction([tableName], 'readwrite');
+        const store = transaction.objectStore(tableName);
+
+        return new Promise((resolve, reject) => {
+            const request = store.add(data);
+
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(new Error(`Failed to insert data: ${request.error}`));
+        });
+    }
+
+    /**
+     * 全データを取得
+     */
+    async getAll(tableName) {
+        const transaction = this.db.transaction([tableName], 'readonly');
+        const store = transaction.objectStore(tableName);
+
+        return new Promise((resolve, reject) => {
+            const request = store.getAll();
+
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(new Error(`Failed to get all data: ${request.error}`));
+        });
+    }
+
+    /**
+     * データを更新
+     */
+    async update(tableName, data) {
+        const transaction = this.db.transaction([tableName], 'readwrite');
+        const store = transaction.objectStore(tableName);
+
+        return new Promise((resolve, reject) => {
+            const request = store.put(data);
+
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(new Error(`Failed to update data: ${request.error}`));
+        });
+    }
+
+    /**
+     * データを削除
+     */
+    async delete(tableName, id) {
+        const transaction = this.db.transaction([tableName], 'readwrite');
+        const store = transaction.objectStore(tableName);
+
+        return new Promise((resolve, reject) => {
+            const request = store.delete(id);
+
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(new Error(`Failed to delete data: ${request.error}`));
+        });
+    }
+
+    /**
+     * データベースを閉じる
+     */
+    close() {
+        if (this.db) {
+            this.db.close();
+            this.db = null;
+        }
+    }
+}
+/**
  * Tokenizer - SQL文をトークンに分割するクラス
  */
 class Tokenizer {
@@ -148,8 +601,12 @@ class Tokenizer {
         const keywords = [
             'SELECT', 'FROM', 'WHERE', 'INSERT', 'INTO', 'VALUES',
             'UPDATE', 'SET', 'DELETE', 'CREATE', 'TABLE',
-            'AND', 'OR', 'NOT', 'NULL', 'LIKE',
-            'INTEGER', 'TEXT', 'REAL', 'BLOB', 'DATE', 'DATETIME'
+            'AND', 'OR', 'NOT', 'NULL', 'LIKE', 'AS',
+            'ORDER', 'BY', 'ASC', 'DESC', 'LIMIT', 'OFFSET',
+            'GROUP', 'HAVING',
+            'COUNT', 'SUM', 'AVG', 'MIN', 'MAX',
+            'INTEGER', 'TEXT', 'REAL', 'BLOB', 'DATE', 'DATETIME',
+            'PRIMARY', 'KEY', 'IF', 'EXISTS'
         ];
 
         if (keywords.includes(upperValue)) {
@@ -301,19 +758,41 @@ class Parser {
         this.expect('KEYWORD', 'CREATE');
         this.expect('KEYWORD', 'TABLE');
         
+        // IF NOT EXISTS のチェック
+        let ifNotExists = false;
+        if (this.current() && this.current().type === 'KEYWORD' && this.current().value === 'IF') {
+            this.advance();
+            this.expect('KEYWORD', 'NOT');
+            this.expect('KEYWORD', 'EXISTS');
+            ifNotExists = true;
+        }
+        
         const tableName = this.expect('IDENTIFIER').value;
         
         this.expect('SYMBOL', '(');
         
         const columns = [];
+        let primaryKey = null;
+        
         while (this.current() && this.current().value !== ')') {
             const columnName = this.expect('IDENTIFIER').value;
             const columnType = this.expect('KEYWORD').value;
             
-            columns.push({
+            const column = {
                 name: columnName,
-                type: columnType
-            });
+                type: columnType,
+                primaryKey: false
+            };
+            
+            // PRIMARY KEY 制約のチェック
+            if (this.current() && this.current().type === 'KEYWORD' && this.current().value === 'PRIMARY') {
+                this.advance();
+                this.expect('KEYWORD', 'KEY');
+                column.primaryKey = true;
+                primaryKey = columnName;
+            }
+            
+            columns.push(column);
             
             // カンマがあれば次のカラムへ
             if (this.current() && this.current().value === ',') {
@@ -326,7 +805,9 @@ class Parser {
         return {
             type: 'CREATE_TABLE',
             tableName: tableName,
-            columns: columns
+            columns: columns,
+            primaryKey: primaryKey,
+            ifNotExists: ifNotExists
         };
     }
 
@@ -408,15 +889,72 @@ class Parser {
     parseSelect() {
         this.expect('KEYWORD', 'SELECT');
         
-        // カラムリスト
+        // カラムリスト（集約関数対応、AS句対応）
         const columns = [];
         while (this.current() && this.current().value !== 'FROM') {
+            let column;
+            let alias = null;
+            
             if (this.current().type === 'OPERATOR' && this.current().value === '*') {
-                columns.push('*');
+                column = '*';
                 this.advance();
+            } else if (this.current().type === 'KEYWORD' &&
+                       ['COUNT', 'SUM', 'AVG', 'MIN', 'MAX'].includes(this.current().value)) {
+                // 集約関数
+                const funcName = this.current().value;
+                this.advance();
+                this.expect('SYMBOL', '(');
+                
+                let argument;
+                if (this.current().type === 'OPERATOR' && this.current().value === '*') {
+                    argument = '*';
+                    this.advance();
+                } else if (this.current().type === 'IDENTIFIER') {
+                    argument = this.current().value;
+                    this.advance();
+                } else {
+                    throw new Error(`Invalid argument for ${funcName}`);
+                }
+                
+                this.expect('SYMBOL', ')');
+                
+                column = {
+                    type: 'AGGREGATE',
+                    function: funcName,
+                    argument: argument
+                };
             } else if (this.current().type === 'IDENTIFIER') {
-                columns.push(this.current().value);
+                column = this.current().value;
                 this.advance();
+            }
+            
+            // AS句のチェック
+            if (this.current() && this.current().type === 'KEYWORD' && this.current().value === 'AS') {
+                this.advance();
+                // エイリアスはIDENTIFIERまたはKEYWORDを許可（予約語もエイリアスとして使用可能）
+                const token = this.current();
+                if (token && (token.type === 'IDENTIFIER' || token.type === 'KEYWORD')) {
+                    alias = token.value.toLowerCase(); // エイリアスは小文字に統一
+                    this.advance();
+                } else {
+                    throw new Error('Expected alias name after AS');
+                }
+            }
+            
+            // カラムとエイリアスを格納
+            if (alias) {
+                if (typeof column === 'object' && column.type === 'AGGREGATE') {
+                    column.alias = alias;
+                    columns.push(column);
+                } else {
+                    columns.push({
+                        type: 'COLUMN',
+                        name: column,
+                        alias: alias
+                    });
+                }
+            } else {
+                columns.push(column);
             }
             
             if (this.current() && this.current().value === ',') {
@@ -434,11 +972,53 @@ class Parser {
             whereCondition = this.parseWhereCondition();
         }
         
+        // GROUP BY句（オプション）
+        let groupBy = null;
+        if (this.current() && this.current().value === 'GROUP') {
+            this.advance();
+            this.expect('KEYWORD', 'BY');
+            groupBy = this.parseGroupBy();
+        }
+        
+        // HAVING句（オプション）
+        let having = null;
+        if (this.current() && this.current().value === 'HAVING') {
+            this.advance();
+            having = this.parseHaving();
+        }
+        
+        // ORDER BY句（オプション）
+        let orderBy = null;
+        if (this.current() && this.current().value === 'ORDER') {
+            this.advance();
+            this.expect('KEYWORD', 'BY');
+            orderBy = this.parseOrderBy();
+        }
+        
+        // LIMIT句（オプション）
+        let limit = null;
+        let offset = null;
+        if (this.current() && this.current().value === 'LIMIT') {
+            this.advance();
+            limit = parseInt(this.expect('NUMBER').value, 10);
+            
+            // OFFSET句（オプション）
+            if (this.current() && this.current().value === 'OFFSET') {
+                this.advance();
+                offset = parseInt(this.expect('NUMBER').value, 10);
+            }
+        }
+        
         return {
             type: 'SELECT',
             columns: columns,
             tableName: tableName,
-            where: whereCondition
+            where: whereCondition,
+            groupBy: groupBy,
+            having: having,
+            orderBy: orderBy,
+            limit: limit,
+            offset: offset
         };
     }
 
@@ -448,7 +1028,6 @@ class Parser {
     parseUpdate() {
         this.expect('KEYWORD', 'UPDATE');
         const tableName = this.expect('IDENTIFIER').value;
-        
         this.expect('KEYWORD', 'SET');
         
         // SET句
@@ -517,6 +1096,140 @@ class Parser {
             tableName: tableName,
             where: whereCondition
         };
+    }
+
+    /**
+     * ORDER BY句をパース
+     */
+    parseOrderBy() {
+        const orderByList = [];
+        
+        while (true) {
+            let columnName;
+            
+            // 集約関数の場合
+            if (this.current().type === 'KEYWORD' &&
+                ['COUNT', 'SUM', 'AVG', 'MIN', 'MAX'].includes(this.current().value)) {
+                const funcName = this.current().value;
+                this.advance();
+                this.expect('SYMBOL', '(');
+                
+                let argument;
+                if (this.current().type === 'OPERATOR' && this.current().value === '*') {
+                    argument = '*';
+                    this.advance();
+                } else if (this.current().type === 'IDENTIFIER') {
+                    argument = this.current().value;
+                    this.advance();
+                } else {
+                    throw new Error(`Invalid argument for ${funcName} in ORDER BY`);
+                }
+                
+                this.expect('SYMBOL', ')');
+                columnName = `${funcName}(${argument})`;
+            } else {
+                // 通常のカラム名
+                columnName = this.expect('IDENTIFIER').value;
+            }
+            
+            let direction = 'ASC'; // デフォルトは昇順
+            
+            // ASC または DESC の指定
+            if (this.current() && (this.current().value === 'ASC' || this.current().value === 'DESC')) {
+                direction = this.current().value;
+                this.advance();
+            }
+            
+            orderByList.push({
+                column: columnName,
+                direction: direction
+            });
+            
+            // 次のカラムがあるかチェック
+            if (this.current() && this.current().value === ',') {
+                this.advance();
+            } else {
+                break;
+            }
+        }
+        
+        return orderByList;
+    }
+
+    /**
+     * GROUP BY句をパース
+     */
+    parseGroupBy() {
+        const groupByList = [];
+        
+        while (true) {
+            const columnName = this.expect('IDENTIFIER').value;
+            groupByList.push(columnName);
+            
+            // 次のカラムがあるかチェック
+            if (this.current() && this.current().value === ',') {
+                this.advance();
+            } else {
+                break;
+            }
+        }
+        
+        return groupByList;
+    }
+
+    /**
+     * HAVING句をパース
+     */
+    parseHaving() {
+        // HAVING句は集約関数を含む条件式
+        // 例: HAVING COUNT(*) > 10
+        // 例: HAVING AVG(price) > 100
+        
+        const condition = {};
+        
+        // 集約関数
+        if (this.current().type === 'KEYWORD' && 
+            ['COUNT', 'SUM', 'AVG', 'MIN', 'MAX'].includes(this.current().value)) {
+            const funcName = this.current().value;
+            this.advance();
+            this.expect('SYMBOL', '(');
+            
+            let argument;
+            if (this.current().type === 'OPERATOR' && this.current().value === '*') {
+                argument = '*';
+                this.advance();
+            } else if (this.current().type === 'IDENTIFIER') {
+                argument = this.current().value;
+                this.advance();
+            } else {
+                throw new Error(`Invalid argument for ${funcName} in HAVING`);
+            }
+            
+            this.expect('SYMBOL', ')');
+            
+            condition.function = funcName;
+            condition.argument = argument;
+        } else {
+            throw new Error('HAVING clause requires an aggregate function');
+        }
+        
+        // 比較演算子
+        if (this.current() && this.current().type === 'OPERATOR') {
+            condition.operator = this.current().value;
+            this.advance();
+        } else {
+            throw new Error('HAVING clause requires a comparison operator');
+        }
+        
+        // 値
+        if (this.current() && this.current().type === 'NUMBER') {
+            condition.value = parseFloat(this.current().value);
+            this.advance();
+        } else {
+            throw new Error('HAVING clause requires a numeric value');
+        }
+        
+        return condition;
     }
 
     /**
@@ -750,18 +1463,26 @@ class Executor {
      * CREATE TABLE文を実行
      */
     async executeCreateTable(statement) {
-        const { tableName, columns } = statement;
+        const { tableName, columns, primaryKey, ifNotExists } = statement;
 
         // テーブルが既に存在するかチェック
         if (this.dbManager.tableExists(tableName)) {
+            // IF NOT EXISTS が指定されている場合はエラーを出さずに成功を返す
+            if (ifNotExists) {
+                return {
+                    type: 'CREATE_TABLE',
+                    success: true,
+                    message: `Table '${tableName}' already exists (skipped)`
+                };
+            }
             throw new Error(`Table '${tableName}' already exists`);
         }
 
         // テーブルを作成
         await this.dbManager.createTable(tableName, columns);
 
-        // スキーマ情報を保存
-        await this.dbManager.saveTableSchema(tableName, columns);
+        // スキーマ情報を保存（PRIMARY KEY情報を含む）
+        await this.dbManager.saveTableSchema(tableName, columns, primaryKey);
 
         return {
             type: 'CREATE_TABLE',
@@ -787,6 +1508,9 @@ class Executor {
             throw new Error(`Schema for table '${tableName}' not found`);
         }
 
+        // PRIMARY KEY情報を取得
+        const primaryKey = await this.dbManager.getTablePrimaryKey(tableName);
+
         // 複数行を挿入
         const insertedIds = [];
         for (const values of valuesList) {
@@ -800,6 +1524,21 @@ class Executor {
                 const columnSchema = schema.find(col => col.name === columnName);
                 if (!columnSchema) {
                     throw new Error(`Column '${columnName}' does not exist in table '${tableName}'`);
+                }
+
+                // PRIMARY KEY制約のチェック
+                if (primaryKey && columnName === primaryKey) {
+                    // NULL値の禁止
+                    if (value === null || value === undefined) {
+                        throw new Error(`PRIMARY KEY column '${columnName}' cannot be NULL`);
+                    }
+                    
+                    // 重複チェック
+                    const existingRows = await this.dbManager.getAll(tableName);
+                    const duplicate = existingRows.find(row => row[columnName] === value);
+                    if (duplicate) {
+                        throw new Error(`PRIMARY KEY constraint violation: duplicate value '${value}' for column '${columnName}'`);
+                    }
                 }
 
                 // データ型の検証と変換
@@ -835,7 +1574,7 @@ class Executor {
      * SELECT文を実行
      */
     async executeSelect(statement) {
-        const { tableName, columns, where } = statement;
+        const { tableName, columns, where, groupBy, having, orderBy, limit, offset } = statement;
 
         // テーブルの存在チェック
         if (!this.dbManager.tableExists(tableName)) {
@@ -850,12 +1589,73 @@ class Executor {
             rows = rows.filter(row => evaluateWhereCondition(row, where));
         }
 
-        // カラムの選択
+        // GROUP BY句の処理
+        if (groupBy && groupBy.length > 0) {
+            return this.executeGroupBy(rows, columns, groupBy, having, orderBy, limit, offset);
+        }
+
+        // 集約関数のチェック（GROUP BY なし）
+        const hasAggregates = columns.some(col => typeof col === 'object' && col.type === 'AGGREGATE');
+
+        if (hasAggregates) {
+            // 集約関数の処理（GROUP BY なし）
+            const result = {};
+            for (const col of columns) {
+                if (typeof col === 'object' && col.type === 'AGGREGATE') {
+                    const { function: funcName, argument, alias } = col;
+                    const columnName = alias || `${funcName}(${argument})`;
+                    result[columnName] = this.calculateAggregate(funcName, argument, rows);
+                }
+            }
+            return {
+                type: 'SELECT',
+                success: true,
+                rows: [result],
+                rowCount: 1
+            };
+        }
+
+        // ORDER BY句でソート
+        if (orderBy && orderBy.length > 0) {
+            rows.sort((a, b) => {
+                for (const order of orderBy) {
+                    const { column, direction } = order;
+                    const aVal = a[column];
+                    const bVal = b[column];
+                    
+                    let comparison = 0;
+                    if (aVal < bVal) comparison = -1;
+                    else if (aVal > bVal) comparison = 1;
+                    
+                    if (comparison !== 0) {
+                        return direction === 'DESC' ? -comparison : comparison;
+                    }
+                }
+                return 0;
+            });
+        }
+
+        // OFFSET と LIMIT を適用
+        if (offset !== null && offset !== undefined) {
+            rows = rows.slice(offset);
+        }
+        if (limit !== null && limit !== undefined) {
+            rows = rows.slice(0, limit);
+        }
+
+        // カラムの選択（エイリアス対応）
         if (!columns.includes('*')) {
             rows = rows.map(row => {
                 const selectedRow = {};
                 for (const col of columns) {
-                    if (row.hasOwnProperty(col)) {
+                    if (typeof col === 'object' && col.type === 'COLUMN') {
+                        // エイリアス付きカラム
+                        const { name, alias } = col;
+                        if (row.hasOwnProperty(name)) {
+                            selectedRow[alias] = row[name];
+                        }
+                    } else if (typeof col === 'string' && row.hasOwnProperty(col)) {
+                        // 通常のカラム
                         selectedRow[col] = row[col];
                     }
                 }
@@ -869,6 +1669,173 @@ class Executor {
             rows: rows,
             rowCount: rows.length
         };
+    }
+
+    /**
+     * 集約関数を計算
+     */
+    calculateAggregate(funcName, argument, rows) {
+        switch (funcName) {
+            case 'COUNT':
+                if (argument === '*') {
+                    return rows.length;
+                } else {
+                    // NULL を除いてカウント
+                    return rows.filter(row => row[argument] !== null && row[argument] !== undefined).length;
+                }
+            
+            case 'SUM':
+                return rows.reduce((sum, row) => {
+                    const value = row[argument];
+                    if (value !== null && value !== undefined && typeof value === 'number') {
+                        return sum + value;
+                    }
+                    return sum;
+                }, 0);
+            
+            case 'AVG':
+                const values = rows.filter(row => {
+                    const value = row[argument];
+                    return value !== null && value !== undefined && typeof value === 'number';
+                }).map(row => row[argument]);
+                
+                if (values.length === 0) return null;
+                return values.reduce((sum, val) => sum + val, 0) / values.length;
+            
+            case 'MIN':
+                const minValues = rows.filter(row => {
+                    const value = row[argument];
+                    return value !== null && value !== undefined;
+                }).map(row => row[argument]);
+                
+                if (minValues.length === 0) return null;
+                return Math.min(...minValues);
+            
+            case 'MAX':
+                const maxValues = rows.filter(row => {
+                    const value = row[argument];
+                    return value !== null && value !== undefined;
+                }).map(row => row[argument]);
+                
+                if (maxValues.length === 0) return null;
+                return Math.max(...maxValues);
+            
+            default:
+                throw new Error(`Unsupported aggregate function: ${funcName}`);
+        }
+    }
+
+    /**
+     * GROUP BY句を実行
+     */
+    executeGroupBy(rows, columns, groupBy, having, orderBy, limit, offset) {
+        // グループ化
+        const groups = {};
+        
+        for (const row of rows) {
+            // グループキーを生成
+            const groupKey = groupBy.map(col => row[col]).join('|');
+            
+            if (!groups[groupKey]) {
+                groups[groupKey] = [];
+            }
+            groups[groupKey].push(row);
+        }
+        
+        // 各グループに対して集約関数を計算
+        const results = [];
+        for (const groupKey in groups) {
+            const groupRows = groups[groupKey];
+            const result = {};
+            
+            // グループ化カラムの値を設定
+            for (let i = 0; i < groupBy.length; i++) {
+                const colName = groupBy[i];
+                result[colName] = groupRows[0][colName];
+            }
+            
+            // 集約関数を計算（エイリアス対応）
+            for (const col of columns) {
+                if (typeof col === 'object' && col.type === 'AGGREGATE') {
+                    const { function: funcName, argument, alias } = col;
+                    const columnName = alias || `${funcName}(${argument})`;
+                    result[columnName] = this.calculateAggregate(funcName, argument, groupRows);
+                } else if (typeof col === 'object' && col.type === 'COLUMN') {
+                    // エイリアス付きカラム
+                    const { name, alias } = col;
+                    if (!groupBy.includes(name)) {
+                        result[alias] = groupRows[0][name];
+                    }
+                } else if (typeof col === 'string' && !groupBy.includes(col)) {
+                    // GROUP BY に含まれないカラムは無視（または最初の値を使用）
+                    result[col] = groupRows[0][col];
+                }
+            }
+            
+            results.push(result);
+        }
+        
+        // HAVING句でフィルタリング
+        let filteredResults = results;
+        if (having) {
+            filteredResults = results.filter(result => {
+                const { function: funcName, argument, operator, value } = having;
+                const columnName = `${funcName}(${argument})`;
+                const aggregateValue = result[columnName];
+                
+                return this.compareValues(aggregateValue, operator, value);
+            });
+        }
+        
+        // ORDER BY句でソート
+        if (orderBy && orderBy.length > 0) {
+            filteredResults.sort((a, b) => {
+                for (const order of orderBy) {
+                    const { column, direction } = order;
+                    const aVal = a[column];
+                    const bVal = b[column];
+                    
+                    let comparison = 0;
+                    if (aVal < bVal) comparison = -1;
+                    else if (aVal > bVal) comparison = 1;
+                    
+                    if (comparison !== 0) {
+                        return direction === 'DESC' ? -comparison : comparison;
+                    }
+                }
+                return 0;
+            });
+        }
+        
+        // OFFSET と LIMIT を適用
+        if (offset !== null && offset !== undefined) {
+            filteredResults = filteredResults.slice(offset);
+        }
+        if (limit !== null && limit !== undefined) {
+            filteredResults = filteredResults.slice(0, limit);
+        }
+        
+        return {
+            type: 'SELECT',
+            success: true,
+            rows: filteredResults,
+            rowCount: filteredResults.length
+        };
+    }
+
+    /**
+     * 値を比較
+     */
+    compareValues(left, operator, right) {
+        switch (operator) {
+            case '=': return left === right;
+            case '!=': return left !== right;
+            case '>': return left > right;
+            case '<': return left < right;
+            case '>=': return left >= right;
+            case '<=': return left <= right;
+            default: return false;
+        }
     }
 
     /**
@@ -888,6 +1855,9 @@ class Executor {
             throw new Error(`Schema for table '${tableName}' not found`);
         }
 
+        // PRIMARY KEY情報を取得
+        const primaryKey = await this.dbManager.getTablePrimaryKey(tableName);
+
         // 全データを取得
         let rows = await this.dbManager.getAll(tableName);
 
@@ -906,6 +1876,20 @@ class Executor {
                 const columnSchema = schema.find(col => col.name === columnName);
                 if (!columnSchema) {
                     throw new Error(`Column '${columnName}' does not exist in table '${tableName}'`);
+                }
+
+                // PRIMARY KEY制約のチェック
+                if (primaryKey && columnName === primaryKey) {
+                    // NULL値の禁止
+                    if (value === null || value === undefined) {
+                        throw new Error(`PRIMARY KEY column '${columnName}' cannot be NULL`);
+                    }
+                    
+                    // 重複チェック（自分自身以外）
+                    const duplicate = rows.find(r => r.__id__ !== row.__id__ && r[columnName] === value);
+                    if (duplicate) {
+                        throw new Error(`PRIMARY KEY constraint violation: duplicate value '${value}' for column '${columnName}'`);
+                    }
                 }
 
                 // データ型の検証と変換
@@ -968,228 +1952,6 @@ class Executor {
             success: true,
             rowCount: deletedCount
         };
-    }
-}
-/**
- * IndexedDBManager - IndexedDB の操作を管理するクラス
- */
-class IndexedDBManager {
-    constructor(dbName) {
-        this.dbName = dbName;
-        this.db = null;
-        this.version = null;
-    }
-
-    /**
-     * データベースを開く
-     */
-    async open() {
-        return new Promise((resolve, reject) => {
-            // まず現在のバージョンを取得
-            const openRequest = indexedDB.open(this.dbName);
-            
-            openRequest.onsuccess = () => {
-                const db = openRequest.result;
-                this.version = db.version;
-                db.close();
-                
-                // 正しいバージョンで再オープン
-                const request = indexedDB.open(this.dbName, this.version);
-
-                request.onerror = () => {
-                    reject(new Error(`Failed to open database: ${request.error}`));
-                };
-
-                request.onsuccess = () => {
-                    this.db = request.result;
-                    resolve(this.db);
-                };
-
-                request.onupgradeneeded = (event) => {
-                    this.db = event.target.result;
-                    
-                    if (!this.db.objectStoreNames.contains('__metadata__')) {
-                        this.db.createObjectStore('__metadata__', { keyPath: 'key' });
-                    }
-                };
-            };
-            
-            openRequest.onerror = () => {
-                // データベースが存在しない場合は新規作成
-                this.version = 1;
-                const request = indexedDB.open(this.dbName, this.version);
-
-                request.onerror = () => {
-                    reject(new Error(`Failed to open database: ${request.error}`));
-                };
-
-                request.onsuccess = () => {
-                    this.db = request.result;
-                    resolve(this.db);
-                };
-
-                request.onupgradeneeded = (event) => {
-                    this.db = event.target.result;
-                    
-                    if (!this.db.objectStoreNames.contains('__metadata__')) {
-                        this.db.createObjectStore('__metadata__', { keyPath: 'key' });
-                    }
-                };
-            };
-        });
-    }
-
-    /**
-     * テーブル（オブジェクトストア）を作成
-     */
-    async createTable(tableName, columns) {
-        // バージョンを上げて再オープン
-        this.version++;
-        this.db.close();
-
-        return new Promise((resolve, reject) => {
-            const request = indexedDB.open(this.dbName, this.version);
-
-            request.onerror = () => {
-                reject(new Error(`Failed to create table: ${request.error}`));
-            };
-
-            request.onsuccess = () => {
-                this.db = request.result;
-                resolve();
-            };
-
-            request.onupgradeneeded = (event) => {
-                const db = event.target.result;
-
-                // テーブルストアを作成
-                if (!db.objectStoreNames.contains(tableName)) {
-                    db.createObjectStore(tableName, { keyPath: '__id__', autoIncrement: true });
-                }
-
-                // メタデータストアが存在しない場合は作成
-                if (!db.objectStoreNames.contains('__metadata__')) {
-                    db.createObjectStore('__metadata__', { keyPath: 'key' });
-                }
-            };
-        });
-    }
-
-    /**
-     * テーブルのスキーマ情報を保存
-     */
-    async saveTableSchema(tableName, columns) {
-        const transaction = this.db.transaction(['__metadata__'], 'readwrite');
-        const store = transaction.objectStore('__metadata__');
-
-        return new Promise((resolve, reject) => {
-            const request = store.put({
-                key: `schema_${tableName}`,
-                tableName: tableName,
-                columns: columns
-            });
-
-            request.onsuccess = () => resolve();
-            request.onerror = () => reject(new Error(`Failed to save schema: ${request.error}`));
-        });
-    }
-
-    /**
-     * テーブルのスキーマ情報を取得
-     */
-    async getTableSchema(tableName) {
-        const transaction = this.db.transaction(['__metadata__'], 'readonly');
-        const store = transaction.objectStore('__metadata__');
-
-        return new Promise((resolve, reject) => {
-            const request = store.get(`schema_${tableName}`);
-
-            request.onsuccess = () => {
-                if (request.result) {
-                    resolve(request.result.columns);
-                } else {
-                    resolve(null);
-                }
-            };
-            request.onerror = () => reject(new Error(`Failed to get schema: ${request.error}`));
-        });
-    }
-
-    /**
-     * テーブルが存在するかチェック
-     */
-    tableExists(tableName) {
-        return this.db.objectStoreNames.contains(tableName);
-    }
-
-    /**
-     * データを挿入
-     */
-    async insert(tableName, data) {
-        const transaction = this.db.transaction([tableName], 'readwrite');
-        const store = transaction.objectStore(tableName);
-
-        return new Promise((resolve, reject) => {
-            const request = store.add(data);
-
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(new Error(`Failed to insert data: ${request.error}`));
-        });
-    }
-
-    /**
-     * 全データを取得
-     */
-    async getAll(tableName) {
-        const transaction = this.db.transaction([tableName], 'readonly');
-        const store = transaction.objectStore(tableName);
-
-        return new Promise((resolve, reject) => {
-            const request = store.getAll();
-
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(new Error(`Failed to get all data: ${request.error}`));
-        });
-    }
-
-    /**
-     * データを更新
-     */
-    async update(tableName, data) {
-        const transaction = this.db.transaction([tableName], 'readwrite');
-        const store = transaction.objectStore(tableName);
-
-        return new Promise((resolve, reject) => {
-            const request = store.put(data);
-
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(new Error(`Failed to update data: ${request.error}`));
-        });
-    }
-
-    /**
-     * データを削除
-     */
-    async delete(tableName, id) {
-        const transaction = this.db.transaction([tableName], 'readwrite');
-        const store = transaction.objectStore(tableName);
-
-        return new Promise((resolve, reject) => {
-            const request = store.delete(id);
-
-            request.onsuccess = () => resolve();
-            request.onerror = () => reject(new Error(`Failed to delete data: ${request.error}`));
-        });
-    }
-
-    /**
-     * データベースを閉じる
-     */
-    close() {
-        if (this.db) {
-            this.db.close();
-            this.db = null;
-        }
     }
 }
 /**
@@ -1302,215 +2064,9 @@ class JSDB {
         }
     }
 }
-/**
- * ヘルパー関数
- */
 
-/**
- * データ型を検証
- */
-function validateDataType(value, type) {
-    switch (type.toUpperCase()) {
-        case 'INTEGER':
-            return Number.isInteger(value);
-        case 'REAL':
-            return typeof value === 'number';
-        case 'TEXT':
-            return typeof value === 'string';
-        case 'BLOB':
-            return value instanceof Blob ||
-                   value instanceof ArrayBuffer ||
-                   value instanceof Uint8Array ||
-                   ArrayBuffer.isView(value);
-        case 'DATE':
-        case 'DATETIME':
-            return value instanceof Date || !isNaN(Date.parse(value));
-        default:
-            return true; // 不明な型は許可
-    }
-}
 
-/**
- * データ型に変換
- */
-function convertToDataType(value, type) {
-    if (value === null || value === undefined) {
-        return null;
-    }
-
-    switch (type.toUpperCase()) {
-        case 'INTEGER':
-            return parseInt(value, 10);
-        case 'REAL':
-            return parseFloat(value);
-        case 'TEXT':
-            return String(value);
-        case 'BLOB':
-            return convertToArrayBuffer(value);
-        case 'DATE':
-        case 'DATETIME':
-            return new Date(value);
-        default:
-            return value;
-    }
-}
-
-/**
- * バイナリデータを ArrayBuffer に変換
- */
-async function convertToArrayBuffer(value) {
-    if (value instanceof ArrayBuffer) {
-        return value;
-    }
-    if (value instanceof Uint8Array || ArrayBuffer.isView(value)) {
-        return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
-    }
-    if (value instanceof Blob) {
-        return await value.arrayBuffer();
-    }
-    throw new Error('Unsupported BLOB data type');
-}
-
-/**
- * バイナリデータを同期的に ArrayBuffer に変換（プレースホルダー用）
- */
-function convertToArrayBufferSync(value) {
-    if (value instanceof ArrayBuffer) {
-        return value;
-    }
-    if (value instanceof Uint8Array || ArrayBuffer.isView(value)) {
-        return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
-    }
-    // Blob は非同期なので、そのまま返す（後で Executor で処理）
-    if (value instanceof Blob) {
-        return value;
-    }
-    throw new Error('Unsupported BLOB data type');
-}
-
-/**
- * 値を比較
- */
-function compareValues(left, operator, right) {
-    // NULL チェック
-    if (left === null || left === undefined || right === null || right === undefined) {
-        if (operator === '=' || operator === '==') {
-            return left === right;
-        } else if (operator === '!=' || operator === '<>') {
-            return left !== right;
-        }
-        return false;
-    }
-
-    // 日付型の比較（Date オブジェクトの場合）
-    if (left instanceof Date || right instanceof Date) {
-        const leftTime = left instanceof Date ? left.getTime() : new Date(left).getTime();
-        const rightTime = right instanceof Date ? right.getTime() : new Date(right).getTime();
-        
-        switch (operator) {
-            case '=':
-            case '==':
-                return leftTime === rightTime;
-            case '!=':
-            case '<>':
-                return leftTime !== rightTime;
-            case '>':
-                return leftTime > rightTime;
-            case '<':
-                return leftTime < rightTime;
-            case '>=':
-                return leftTime >= rightTime;
-            case '<=':
-                return leftTime <= rightTime;
-            default:
-                throw new Error(`Unknown operator: ${operator}`);
-        }
-    }
-
-    switch (operator) {
-        case '=':
-        case '==':
-            return left == right;
-        case '!=':
-        case '<>':
-            return left != right;
-        case '>':
-            return left > right;
-        case '<':
-            return left < right;
-        case '>=':
-            return left >= right;
-        case '<=':
-            return left <= right;
-        default:
-            throw new Error(`Unknown operator: ${operator}`);
-    }
-}
-
-/**
- * LIKE パターンマッチング
- */
-function matchLike(value, pattern) {
-    if (value === null || value === undefined) {
-        return false;
-    }
-    
-    // 値を文字列に変換
-    const str = String(value);
-    
-    // SQL の LIKE パターンを正規表現に変換
-    // % は .* (任意の文字列)、_ は . (任意の1文字) に変換
-    const regexPattern = pattern
-        .replace(/[.*+?^${}()|[\]\\]/g, '\\$&') // 特殊文字をエスケープ
-        .replace(/%/g, '.*')  // % を .* に変換
-        .replace(/_/g, '.');  // _ を . に変換
-    
-    const regex = new RegExp('^' + regexPattern + '$', 'i'); // 大文字小文字を区別しない
-    return regex.test(str);
-}
-
-/**
- * WHERE 条件を評価
- */
-function evaluateWhereCondition(row, condition) {
-    if (!condition) {
-        return true;
-    }
-
-    // 論理演算子の処理
-    if (condition.type === 'AND') {
-        return evaluateWhereCondition(row, condition.left) &&
-               evaluateWhereCondition(row, condition.right);
-    }
-    if (condition.type === 'OR') {
-        return evaluateWhereCondition(row, condition.left) ||
-               evaluateWhereCondition(row, condition.right);
-    }
-
-    // LIKE 演算の処理
-    if (condition.type === 'LIKE') {
-        const leftValue = row[condition.left];
-        const pattern = condition.pattern;
-        return matchLike(leftValue, pattern);
-    }
-
-    // 比較演算の処理
-    if (condition.type === 'COMPARISON') {
-        const leftValue = row[condition.left];
-        const rightValue = condition.right;
-        return compareValues(leftValue, condition.operator, rightValue);
-    }
-
-    return true;
-}
-
-/**
- * エラーメッセージを生成
- */
-function createError(message, details = null) {
-    const error = new Error(message);
-    if (details) {
-        error.details = details;
-    }
-    return error;
+// Export to global scope
+if (typeof window !== 'undefined') {
+    window.JSDB = JSDB;
 }

@@ -106,7 +106,7 @@ class IndexedDBManager {
     /**
      * テーブルのスキーマ情報を保存
      */
-    async saveTableSchema(tableName, columns) {
+    async saveTableSchema(tableName, columns, primaryKey = null) {
         const transaction = this.db.transaction(['__metadata__'], 'readwrite');
         const store = transaction.objectStore('__metadata__');
 
@@ -114,11 +114,30 @@ class IndexedDBManager {
             const request = store.put({
                 key: `schema_${tableName}`,
                 tableName: tableName,
-                columns: columns
+                columns: columns,
+                primaryKey: primaryKey
             });
 
             request.onsuccess = () => resolve();
             request.onerror = () => reject(new Error(`Failed to save schema: ${request.error}`));
+        });
+    }
+
+    /**
+     * テーブルのPRIMARY KEY情報を取得
+     */
+    async getTablePrimaryKey(tableName) {
+        const transaction = this.db.transaction(['__metadata__'], 'readonly');
+        const store = transaction.objectStore('__metadata__');
+
+        return new Promise((resolve, reject) => {
+            const request = store.get(`schema_${tableName}`);
+
+            request.onsuccess = () => {
+                const result = request.result;
+                resolve(result ? result.primaryKey : null);
+            };
+            request.onerror = () => reject(new Error(`Failed to get primary key: ${request.error}`));
         });
     }
 

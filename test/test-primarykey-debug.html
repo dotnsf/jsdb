@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>JSDB PRIMARY KEY Debug</title>
+    <script src="../jsdb.js?v=20260603-2"></script>
+</head>
+<body>
+    <h1>JSDB PRIMARY KEY Debug Test</h1>
+    <div id="result"></div>
+
+    <script>
+        async function test() {
+            const resultDiv = document.getElementById('result');
+            try {
+                const db = new JSDB('test_debug_db_' + Date.now());
+                
+                // Simple test without line breaks
+                const sql = "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)";
+                console.log('SQL:', sql);
+                console.log('SQL length:', sql.length);
+                console.log('SQL charCodeAt(0):', sql.charCodeAt(0));
+                console.log('First char:', sql[0]);
+                
+                // Test tokenizer directly
+                const tokenizer = new Tokenizer(sql);
+                const tokens = tokenizer.tokenize();
+                console.log('Tokens:', tokens);
+                
+                const result = await db.execute(sql);
+                console.log('Result:', result);
+                
+                resultDiv.innerHTML = '<span style="color: green;">✓ Test Passed</span><br>';
+                resultDiv.innerHTML += 'Table created successfully<br>';
+                resultDiv.innerHTML += 'Tokens: ' + JSON.stringify(tokens.slice(0, 10), null, 2);
+            } catch (error) {
+                console.error('Error:', error);
+                resultDiv.innerHTML = '<span style="color: red;">✗ Test Failed</span><br>';
+                resultDiv.innerHTML += 'Error: ' + error.message + '<br>';
+                resultDiv.innerHTML += 'Stack: <pre>' + error.stack + '</pre>';
+            }
+        }
+        
+        test();
+    </script>
+</body>
+</html>

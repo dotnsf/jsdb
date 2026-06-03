@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JSDB ORDER BY & LIMIT Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 20px auto;
+            padding: 0 20px;
+        }
+        h1 {
+            color: #333;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .test-section h2 {
+            margin-top: 0;
+            color: #0066cc;
+        }
+        .success {
+            color: green;
+            font-weight: bold;
+        }
+        .error {
+            color: red;
+            font-weight: bold;
+        }
+        pre {
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 3px;
+            overflow-x: auto;
+        }
+        .test-result {
+            margin: 10px 0;
+            padding: 10px;
+            border-left: 4px solid #ddd;
+        }
+        .test-result.pass {
+            border-left-color: green;
+            background: #f0fff0;
+        }
+        .test-result.fail {
+            border-left-color: red;
+            background: #fff0f0;
+        }
+    </style>
+</head>
+<body>
+    <h1>JSDB ORDER BY & LIMIT テスト</h1>
+    <div id="results"></div>
+
+    <script src="../jsdb.js"></script>
+    <script>
+        const results = document.getElementById('results');
+        let testCount = 0;
+        let passCount = 0;
+        let failCount = 0;
+
+        function addResult(title, passed, message, data = null) {
+            testCount++;
+            if (passed) passCount++;
+            else failCount++;
+
+            const div = document.createElement('div');
+            div.className = `test-result ${passed ? 'pass' : 'fail'}`;
+            div.innerHTML = `
+                <strong>${passed ? '✓' : '✗'} Test ${testCount}: ${title}</strong>
+                <p>${message}</p>
+                ${data ? `<pre>${JSON.stringify(data, null, 2)}</pre>` : ''}
+            `;
+            results.appendChild(div);
+        }
+
+        async function runTests() {
+            try {
+                // データベース初期化
+                const db = new JSDB('test_order_limit_db');
+                await db.execute('CREATE TABLE users (id INTEGER, name TEXT, age INTEGER, score INTEGER)');
+
+                // テストデータを挿入
+                await db.execute("INSERT INTO users (id, name, age, score) VALUES (1, 'Alice', 25, 85)");
+                await db.execute("INSERT INTO users (id, name, age, score) VALUES (2, 'Bob', 30, 92)");
+                await db.execute("INSERT INTO users (id, name, age, score) VALUES (3, 'Charlie', 22, 78)");
+                await db.execute("INSERT INTO users (id, name, age, score) VALUES (4, 'David', 28, 88)");
+                await db.execute("INSERT INTO users (id, name, age, score) VALUES (5, 'Eve', 35, 95)");
+
+                // Test 1: ORDER BY 昇順（ASC）
+                let result = await db.execute('SELECT * FROM users ORDER BY age ASC');
+                addResult(
+                    'ORDER BY 昇順（ASC）',
+                    result.rows[0].name === 'Charlie' && result.rows[4].name === 'Eve',
+                    '年齢の昇順でソートされた',
+                    result.rows.map(r => ({ name: r.name, age: r.age }))
+                );
+
+                // Test 2: ORDER BY 降順（DESC）
+                result = await db.execute('SELECT * FROM users ORDER BY age DESC');
+                addResult(
+                    'ORDER BY 降順（DESC）',
+                    result.rows[0].name === 'Eve' && result.rows[4].name === 'Charlie',
+                    '年齢の降順でソートされた',
+                    result.rows.map(r => ({ name: r.name, age: r.age }))
+                );
+
+                // Test 3: ORDER BY デフォルト（ASC）
+                result = await db.execute('SELECT * FROM users ORDER BY score');
+                addResult(
+                    'ORDER BY デフォルト（ASC）',
+                    result.rows[0].name === 'Charlie' && result.rows[0].score === 78,
+                    'デフォルトで昇順ソートされた',
+                    result.rows.map(r => ({ name: r.name, score: r.score }))
+                );
+
+                // Test 4: 複数カラムでの ORDER BY
+                await db.execute("INSERT INTO users (id, name, age, score) VALUES (6, 'Frank', 25, 90)");
+                result = await db.execute('SELECT * FROM users ORDER BY age ASC, score DESC');
+                const age25Users = result.rows.filter(r => r.age === 25);
+                addResult(
+                    '複数カラムでの ORDER BY',
+                    age25Users[0].name === 'Frank' && age25Users[1].name === 'Alice',
+                    '年齢昇順、スコア降順でソートされた',
+                    result.rows.map(r => ({ name: r.name, age: r.age, score: r.score }))
+                );
+
+                // Test 5: LIMIT のみ
+                result = await db.execute('SELECT * FROM users LIMIT 3');
+                addResult(
+                    'LIMIT のみ',
+                    result.rows.length === 3,
+                    '最初の3件のみ取得された',
+                    { count: result.rows.length, names: result.rows.map(r => r.name) }
+                );
+
+                // Test 6: ORDER BY と LIMIT の組み合わせ
+                result = await db.execute('SELECT * FROM users ORDER BY score DESC LIMIT 3');
+                addResult(
+                    'ORDER BY と LIMIT の組み合わせ',
+                    result.rows.length === 3 && result.rows[0].name === 'Eve' && result.rows[0].score === 95,
+                    'スコア上位3件が取得された',
+                    result.rows.map(r => ({ name: r.name, score: r.score }))
+                );
+
+                // Test 7: OFFSET のみ（LIMIT と併用）
+                result = await db.execute('SELECT * FROM users LIMIT 10 OFFSET 2');
+                addResult(
+                    'OFFSET のみ（LIMIT と併用）',
+                    result.rows.length === 4 && result.rows[0].id === 3,
+                    '最初の2件をスキップして残りを取得',
+                    result.rows.map(r => ({ id: r.id, name: r.name }))
+                );
+
+                // Test 8: LIMIT と OFFSET の組み合わせ
+                result = await db.execute('SELECT * FROM users ORDER BY id ASC LIMIT 2 OFFSET 2');
+                addResult(
+                    'LIMIT と OFFSET の組み合わせ',
+                    result.rows.length === 2 && result.rows[0].id === 3 && result.rows[1].id === 4,
+                    'ページネーション（3-4件目）が正しく動作',
+                    result.rows.map(r => ({ id: r.id, name: r.name }))
+                );
+
+                // Test 9: WHERE, ORDER BY, LIMIT の組み合わせ
+                result = await db.execute('SELECT * FROM users WHERE age >= 25 ORDER BY score DESC LIMIT 2');
+                addResult(
+                    'WHERE, ORDER BY, LIMIT の組み合わせ',
+                    result.rows.length === 2 && result.rows[0].name === 'Eve',
+                    '25歳以上でスコア上位2件が取得された',
+                    result.rows.map(r => ({ name: r.name, age: r.age, score: r.score }))
+                );
+
+                // Test 10: 文字列カラムでの ORDER BY
+                result = await db.execute('SELECT * FROM users ORDER BY name ASC');
+                addResult(
+                    '文字列カラムでの ORDER BY',
+                    result.rows[0].name === 'Alice' && result.rows[result.rows.length - 1].name === 'Frank',
+                    '名前のアルファベット順でソートされた',
+                    result.rows.map(r => r.name)
+                );
+
+                // Test 11: LIMIT 0
+                result = await db.execute('SELECT * FROM users LIMIT 0');
+                addResult(
+                    'LIMIT 0',
+                    result.rows.length === 0,
+                    'LIMIT 0 で空の結果が返された',
+                    { count: result.rows.length }
+                );
+
+                // Test 12: OFFSET が総件数を超える場合
+                result = await db.execute('SELECT * FROM users LIMIT 10 OFFSET 100');
+                addResult(
+                    'OFFSET が総件数を超える場合',
+                    result.rows.length === 0,
+                    '空の結果が返された',
+                    { count: result.rows.length }
+                );
+
+                // Test 13: プレースホルダーと ORDER BY の組み合わせ
+                result = await db.execute('SELECT * FROM users WHERE age > ? ORDER BY age ASC', [25]);
+                addResult(
+                    'プレースホルダーと ORDER BY の組み合わせ',
+                    result.rows.length === 3 && result.rows[0].age === 28,
+                    'プレースホルダーと ORDER BY が正しく動作',
+                    result.rows.map(r => ({ name: r.name, age: r.age }))
+                );
+
+                // Test 14: カラム選択と ORDER BY
+                result = await db.execute('SELECT name, score FROM users ORDER BY score DESC LIMIT 3');
+                addResult(
+                    'カラム選択と ORDER BY',
+                    result.rows.length === 3 && !result.rows[0].hasOwnProperty('age'),
+                    '選択したカラムのみが返され、正しくソートされた',
+                    result.rows
+                );
+
+                // 最終結果
+                const summary = document.createElement('div');
+                summary.className = 'test-section';
+                summary.innerHTML = `
+                    <h2>テスト結果サマリー</h2>
+                    <p>総テスト数: ${testCount}</p>
+                    <p class="success">成功: ${passCount}</p>
+                    <p class="error">失敗: ${failCount}</p>
+                    <p><strong>${failCount === 0 ? 'すべてのテストに合格しました！' : 'いくつかのテストが失敗しました。'}</strong></p>
+                `;
+                results.appendChild(summary);
+
+            } catch (error) {
+                addResult('エラー', false, `テスト実行中にエラーが発生: ${error.message}`);
+                console.error(error);
+            }
+        }
+
+        // ページ読み込み後にテスト実行
+        window.addEventListener('load', runTests);
+    </script>
+</body>
+</html>

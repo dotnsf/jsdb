@@ -181,6 +181,18 @@
                     testDeleteWithWhere,
                     testDataTypes,
                     testComplexQueries,
+                    testDateTypes,
+                    testLikeOperator,
+                    testBulkInsert,
+                    testPlaceholders,
+                    testOrderBy,
+                    testLimit,
+                    testAggregateFunctions,
+                    testGroupBy,
+                    testHaving,
+                    testPrimaryKey,
+                    testColumnAlias,
+                    testIfNotExists,
                     testErrorHandling
                 ];
 
@@ -389,6 +401,224 @@
                 
             } catch (error) {
                 displayResult('エラーハンドリング', false, error.message);
+            }
+        }
+
+        // Test 14: 日付型のテスト
+        async function testDateTypes() {
+            try {
+                await db.execute('CREATE TABLE events (id INTEGER, title TEXT, event_date DATE)');
+                await db.execute("INSERT INTO events (id, title, event_date) VALUES (1, 'Meeting', '2026-06-15')");
+                await db.execute("INSERT INTO events (id, title, event_date) VALUES (2, 'Conference', '2026-07-01')");
+                
+                const result = await db.execute("SELECT * FROM events WHERE event_date > '2026-06-20'");
+                const passed = result.success && result.rowCount === 1;
+                
+                displayResult('日付型 (DATE)', passed, `${result.rowCount}件取得`);
+            } catch (error) {
+                displayResult('日付型 (DATE)', false, error.message);
+            }
+        }
+
+        // Test 15: LIKE演算子のテスト
+        async function testLikeOperator() {
+            try {
+                const result1 = await db.execute("SELECT * FROM users WHERE name LIKE 'A%'");
+                const passed1 = result1.success && result1.rowCount === 1;
+                
+                const result2 = await db.execute("SELECT * FROM events WHERE title LIKE '%ing'");
+                const passed2 = result2.success && result2.rowCount === 1;
+                
+                displayResult('LIKE演算子 (前方一致)', passed1);
+                displayResult('LIKE演算子 (後方一致)', passed2);
+            } catch (error) {
+                displayResult('LIKE演算子', false, error.message);
+            }
+        }
+
+        // Test 16: バルクインサートのテスト
+        async function testBulkInsert() {
+            try {
+                await db.execute('CREATE TABLE bulk_test (id INTEGER, value TEXT)');
+                const result = await db.execute("INSERT INTO bulk_test (id, value) VALUES (1, 'A'), (2, 'B'), (3, 'C')");
+                
+                const checkResult = await db.execute('SELECT * FROM bulk_test');
+                const passed = result.success && checkResult.rowCount === 3;
+                
+                displayResult('バルクインサート', passed, `${checkResult.rowCount}件挿入`);
+            } catch (error) {
+                displayResult('バルクインサート', false, error.message);
+            }
+        }
+
+        // Test 17: プレースホルダーのテスト
+        async function testPlaceholders() {
+            try {
+                // 位置指定プレースホルダー
+                await db.execute('INSERT INTO bulk_test (id, value) VALUES (?, ?)', [4, 'D']);
+                const result1 = await db.execute('SELECT * FROM bulk_test WHERE id = ?', [4]);
+                const passed1 = result1.success && result1.rowCount === 1;
+                
+                // 名前付きプレースホルダー
+                await db.execute('INSERT INTO bulk_test (id, value) VALUES (:id, :value)', {id: 5, value: 'E'});
+                const result2 = await db.execute('SELECT * FROM bulk_test WHERE value = :value', {value: 'E'});
+                const passed2 = result2.success && result2.rowCount === 1;
+                
+                displayResult('プレースホルダー (位置指定)', passed1);
+                displayResult('プレースホルダー (名前付き)', passed2);
+            } catch (error) {
+                displayResult('プレースホルダー', false, error.message);
+            }
+        }
+
+        // Test 18: ORDER BYのテスト
+        async function testOrderBy() {
+            try {
+                const result1 = await db.execute('SELECT * FROM products ORDER BY price ASC');
+                const passed1 = result1.success && result1.rows[0].price <= result1.rows[1].price;
+                
+                const result2 = await db.execute('SELECT * FROM products ORDER BY price DESC');
+                const passed2 = result2.success && result2.rows[0].price >= result2.rows[1].price;
+                
+                displayResult('ORDER BY ASC', passed1);
+                displayResult('ORDER BY DESC', passed2);
+            } catch (error) {
+                displayResult('ORDER BY', false, error.message);
+            }
+        }
+
+        // Test 19: LIMITのテスト
+        async function testLimit() {
+            try {
+                const result1 = await db.execute('SELECT * FROM bulk_test LIMIT 2');
+                const passed1 = result1.success && result1.rowCount === 2;
+                
+                const result2 = await db.execute('SELECT * FROM bulk_test LIMIT 2 OFFSET 2');
+                const passed2 = result2.success && result2.rowCount === 2;
+                
+                displayResult('LIMIT', passed1, `${result1.rowCount}件取得`);
+                displayResult('LIMIT OFFSET', passed2, `${result2.rowCount}件取得`);
+            } catch (error) {
+                displayResult('LIMIT', false, error.message);
+            }
+        }
+
+        // Test 20: 集約関数のテスト
+        async function testAggregateFunctions() {
+            try {
+                const result1 = await db.execute('SELECT COUNT(*) FROM bulk_test');
+                const passed1 = result1.success && result1.rows[0]['COUNT(*)'] === 5;
+                
+                const result2 = await db.execute('SELECT AVG(price) FROM products');
+                const passed2 = result2.success && result2.rows[0]['AVG(price)'] !== null;
+                
+                const result3 = await db.execute('SELECT MIN(price), MAX(price) FROM products');
+                const passed3 = result3.success && result3.rows[0]['MIN(price)'] !== null;
+                
+                displayResult('COUNT(*)', passed1);
+                displayResult('AVG()', passed2);
+                displayResult('MIN(), MAX()', passed3);
+            } catch (error) {
+                displayResult('集約関数', false, error.message);
+            }
+        }
+
+        // Test 21: GROUP BYのテスト
+        async function testGroupBy() {
+            try {
+                await db.execute('CREATE TABLE sales (id INTEGER, product TEXT, amount REAL)');
+                await db.execute("INSERT INTO sales (id, product, amount) VALUES (1, 'Apple', 100), (2, 'Apple', 150), (3, 'Banana', 80)");
+                
+                const result = await db.execute('SELECT product, COUNT(*), SUM(amount) FROM sales GROUP BY product');
+                const passed = result.success && result.rowCount === 2;
+                
+                displayResult('GROUP BY', passed, `${result.rowCount}グループ`);
+            } catch (error) {
+                displayResult('GROUP BY', false, error.message);
+            }
+        }
+
+        // Test 22: HAVINGのテスト
+        async function testHaving() {
+            try {
+                const result = await db.execute('SELECT product, SUM(amount) FROM sales GROUP BY product HAVING SUM(amount) > 100');
+                const passed = result.success && result.rowCount === 1;
+                
+                displayResult('HAVING', passed, `${result.rowCount}グループ`);
+            } catch (error) {
+                displayResult('HAVING', false, error.message);
+            }
+        }
+
+        // Test 23: PRIMARY KEY制約のテスト
+        async function testPrimaryKey() {
+            try {
+                await db.execute('CREATE TABLE accounts (id INTEGER PRIMARY KEY, username TEXT)');
+                await db.execute("INSERT INTO accounts (id, username) VALUES (1, 'alice')");
+                
+                // NULL値のテスト
+                let errorCaught1 = false;
+                try {
+                    await db.execute("INSERT INTO accounts (id, username) VALUES (NULL, 'bob')");
+                } catch (error) {
+                    errorCaught1 = true;
+                }
+                
+                // 重複値のテスト
+                let errorCaught2 = false;
+                try {
+                    await db.execute("INSERT INTO accounts (id, username) VALUES (1, 'charlie')");
+                } catch (error) {
+                    errorCaught2 = true;
+                }
+                
+                displayResult('PRIMARY KEY (NULL禁止)', errorCaught1);
+                displayResult('PRIMARY KEY (重複禁止)', errorCaught2);
+            } catch (error) {
+                displayResult('PRIMARY KEY', false, error.message);
+            }
+        }
+
+        // Test 24: カラムエイリアスのテスト
+        async function testColumnAlias() {
+            try {
+                const result1 = await db.execute('SELECT name AS user_name FROM users');
+                const passed1 = result1.success && result1.rows[0].hasOwnProperty('user_name');
+                
+                const result2 = await db.execute('SELECT COUNT(*) AS total FROM users');
+                const passed2 = result2.success && result2.rows[0].hasOwnProperty('total');
+                
+                displayResult('カラムエイリアス (通常)', passed1);
+                displayResult('カラムエイリアス (集約関数)', passed2);
+            } catch (error) {
+                displayResult('カラムエイリアス', false, error.message);
+            }
+        }
+
+        // Test 25: IF NOT EXISTSのテスト
+        async function testIfNotExists() {
+            try {
+                // 最初の作成
+                const result1 = await db.execute('CREATE TABLE IF NOT EXISTS test_table (id INTEGER, name TEXT)');
+                const passed1 = result1.success;
+                
+                // 2回目の作成（エラーにならない）
+                const result2 = await db.execute('CREATE TABLE IF NOT EXISTS test_table (id INTEGER, name TEXT)');
+                const passed2 = result2.success;
+                
+                // IF NOT EXISTSなしで重複作成（エラーになる）
+                let errorCaught = false;
+                try {
+                    await db.execute('CREATE TABLE test_table (id INTEGER, name TEXT)');
+                } catch (error) {
+                    errorCaught = true;
+                }
+                
+                displayResult('IF NOT EXISTS (初回作成)', passed1);
+                displayResult('IF NOT EXISTS (重複作成)', passed2);
+                displayResult('IF NOT EXISTS (エラー確認)', errorCaught);
+            } catch (error) {
+                displayResult('IF NOT EXISTS', false, error.message);
             }
         }
     </script>

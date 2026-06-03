@@ -148,8 +148,12 @@ class Tokenizer {
         const keywords = [
             'SELECT', 'FROM', 'WHERE', 'INSERT', 'INTO', 'VALUES',
             'UPDATE', 'SET', 'DELETE', 'CREATE', 'TABLE',
-            'AND', 'OR', 'NOT', 'NULL', 'LIKE',
-            'INTEGER', 'TEXT', 'REAL', 'BLOB', 'DATE', 'DATETIME'
+            'AND', 'OR', 'NOT', 'NULL', 'LIKE', 'AS',
+            'ORDER', 'BY', 'ASC', 'DESC', 'LIMIT', 'OFFSET',
+            'GROUP', 'HAVING',
+            'COUNT', 'SUM', 'AVG', 'MIN', 'MAX',
+            'INTEGER', 'TEXT', 'REAL', 'BLOB', 'DATE', 'DATETIME',
+            'PRIMARY', 'KEY', 'IF', 'EXISTS'
         ];
 
         if (keywords.includes(upperValue)) {

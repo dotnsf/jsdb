@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JSDB PRIMARY KEY Test</title>
+    <script src="../jsdb.js?v=20260603-3"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 20px auto;
+            padding: 0 20px;
+        }
+        h1 {
+            color: #333;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .test-section h2 {
+            margin-top: 0;
+            color: #0066cc;
+        }
+        .success {
+            color: green;
+            font-weight: bold;
+        }
+        .error {
+            color: red;
+            font-weight: bold;
+        }
+        .result {
+            background-color: #f5f5f5;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 3px;
+            white-space: pre-wrap;
+            font-family: monospace;
+        }
+        button {
+            background-color: #0066cc;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            margin: 5px;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0052a3;
+        }
+    </style>
+</head>
+<body>
+    <h1>JSDB PRIMARY KEY Constraint Test</h1>
+    
+    <div class="test-section">
+        <h2>Test 1: CREATE TABLE with PRIMARY KEY</h2>
+        <button onclick="test1()">Run Test 1</button>
+        <div id="result1" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test 2: INSERT with NULL PRIMARY KEY (should fail)</h2>
+        <button onclick="test2()">Run Test 2</button>
+        <div id="result2" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test 3: INSERT with duplicate PRIMARY KEY (should fail)</h2>
+        <button onclick="test3()">Run Test 3</button>
+        <div id="result3" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test 4: Valid INSERT operations</h2>
+        <button onclick="test4()">Run Test 4</button>
+        <div id="result4" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test 5: UPDATE PRIMARY KEY to NULL (should fail)</h2>
+        <button onclick="test5()">Run Test 5</button>
+        <div id="result5" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test 6: UPDATE PRIMARY KEY to duplicate value (should fail)</h2>
+        <button onclick="test6()">Run Test 6</button>
+        <div id="result6" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test 7: Valid UPDATE operations</h2>
+        <button onclick="test7()">Run Test 7</button>
+        <div id="result7" class="result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Run All Tests</h2>
+        <button onclick="runAllTests()">Run All Tests</button>
+    </div>
+
+    <script>
+        let db;
+
+        async function initDB() {
+            // Use unique database name for each test run to avoid conflicts
+            db = new JSDB('test_primarykey_db_' + Date.now());
+        }
+
+        async function test1() {
+            const resultDiv = document.getElementById('result1');
+            try {
+                await initDB();
+                
+                // CREATE TABLE with PRIMARY KEY
+                await db.execute(`
+                    CREATE TABLE users (
+                        id INTEGER PRIMARY KEY,
+                        name TEXT,
+                        email TEXT
+                    )
+                `);
+                
+                resultDiv.innerHTML = '<span class="success">✓ Test 1 Passed</span>\n';
+                resultDiv.innerHTML += 'Table created with PRIMARY KEY constraint on id column';
+            } catch (error) {
+                resultDiv.innerHTML = '<span class="error">✗ Test 1 Failed</span>\n';
+                resultDiv.innerHTML += 'Error: ' + error.message;
+            }
+        }
+
+        async function test2() {
+            const resultDiv = document.getElementById('result2');
+            try {
+                await initDB();
+                
+                await db.execute(`
+                    CREATE TABLE users (
+                        id INTEGER PRIMARY KEY,
+                        name TEXT,
+                        email TEXT
+                    )
+                `);
+                
+                // Try to insert NULL PRIMARY KEY
+                try {
+                    await db.execute(`INSERT INTO users (id, name, email) VALUES (NULL, 'Alice', 'alice@example.com')`);
+                    resultDiv.innerHTML = '<span class="error">✗ Test 2 Failed</span>\n';
+                    resultDiv.innerHTML += 'Expected error but insert succeeded';
+                } catch (error) {
+                    if (error.message.includes('PRIMARY KEY') && error.message.includes('NULL')) {
+                        resultDiv.innerHTML = '<span class="success">✓ Test 2 Passed</span>\n';
+                        resultDiv.innerHTML += 'Correctly rejected NULL PRIMARY KEY\n';
+                        resultDiv.innerHTML += 'Error message: ' + error.message;
+                    } else {
+                        resultDiv.innerHTML = '<span class="error">✗ Test 2 Failed</span>\n';
+                        resultDiv.innerHTML += 'Wrong error message: ' + error.message;
+                    }
+                }
+            } catch (error) {
+                resultDiv.innerHTML = '<span class="error">✗ Test 2 Failed</span>\n';
+                resultDiv.innerHTML += 'Setup error: ' + error.message;
+            }
+        }
+
+        async function test3() {
+            const resultDiv = document.getElementById('result3');
+            try {
+                await initDB();
+                
+                await db.execute(`
+                    CREATE TABLE users (
+                        id INTEGER PRIMARY KEY,
+                        name TEXT,
+                        email TEXT
+                    )
+                `);
+                
+                // Insert first record
+                await db.execute(`INSERT INTO users (id, name, email) VALUES (1, 'Alice', 'alice@example.com')`);
+                
+                // Try to insert duplicate PRIMARY KEY
+                try {
+                    await db.execute(`INSERT INTO users (id, name, email) VALUES (1, 'Bob', 'bob@example.com')`);
+                    resultDiv.innerHTML = '<span class="error">✗ Test 3 Failed</span>\n';
+                    resultDiv.innerHTML += 'Expected error but insert succeeded';
+                } catch (error) {
+                    if (error.message.includes('PRIMARY KEY') && error.message.includes('duplicate')) {
+                        resultDiv.innerHTML = '<span class="success">✓ Test 3 Passed</span>\n';
+                        resultDiv.innerHTML += 'Correctly rejected duplicate PRIMARY KEY\n';
+                        resultDiv.innerHTML += 'Error message: ' + error.message;
+                    } else {
+                        resultDiv.innerHTML = '<span class="error">✗ Test 3 Failed</span>\n';
+                        resultDiv.innerHTML += 'Wrong error message: ' + error.message;
+                    }
+                }
+            } catch (error) {
+                resultDiv.innerHTML = '<span class="error">✗ Test 3 Failed</span>\n';
+                resultDiv.innerHTML += 'Setup error: ' + error.message;
+            }
+        }
+
+        async function test4() {
+            const resultDiv = document.getElementById('result4');
+            try {
+                await initDB();
+                
+                await db.execute(`
+                    CREATE TABLE users (
+                        id INTEGER PRIMARY KEY,
+                        name TEXT,
+                        email TEXT
+                    )
+                `);
+                
+                // Insert valid records
+                await db.execute(`INSERT INTO users (id, name, email) VALUES (1, 'Alice', 'alice@example.com')`);
+                await db.execute(`INSERT INTO users (id, name, email) VALUES (2, 'Bob', 'bob@example.com')`);
+                await db.execute(`INSERT INTO users (id, name, email) VALUES (3, 'Charlie', 'charlie@example.com')`);
+                
+                // Verify data
+                const result = await db.execute('SELECT * FROM users ORDER BY id');
+                
+                if (result.rows.length === 3 &&
+                    result.rows[0].id === 1 && result.rows[0].name === 'Alice' &&
+                    result.rows[1].id === 2 && result.rows[1].name === 'Bob' &&
+                    result.rows[2].id === 3 && result.rows[2].name === 'Charlie') {
+                    resultDiv.innerHTML = '<span class="success">✓ Test 4 Passed</span>\n';
+                    resultDiv.innerHTML += 'Successfully inserted 3 records with unique PRIMARY KEYs\n';
+                    resultDiv.innerHTML += JSON.stringify(result.rows, null, 2);
+                } else {
+                    resultDiv.innerHTML = '<span class="error">✗ Test 4 Failed</span>\n';
+                    resultDiv.innerHTML += 'Data verification failed\n';
+                    resultDiv.innerHTML += JSON.stringify(result, null, 2);
+                }
+            } catch (error) {
+                resultDiv.innerHTML = '<span class="error">✗ Test 4 Failed</span>\n';
+                resultDiv.innerHTML += 'Error: ' + error.message;
+            }
+        }
+
+        async function test5() {
+            const resultDiv = document.getElementById('result5');
+            try {
+                await initDB();
+                
+                await db.execute(`
+                    CREATE TABLE users (
+                        id INTEGER PRIMARY KEY,
+                        name TEXT,
+                        email TEXT
+                    )
+                `);
+                
+                await db.execute(`INSERT INTO users (id, name, email) VALUES (1, 'Alice', 'alice@example.com')`);
+                
+                // Try to update PRIMARY KEY to NULL
+                try {
+                    await db.execute(`UPDATE users SET id = NULL WHERE id = 1`);
+                    resultDiv.innerHTML = '<span class="error">✗ Test 5 Failed</span>\n';
+                    resultDiv.innerHTML += 'Expected error but update succeeded';
+                } catch (error) {
+                    if (error.message.includes('PRIMARY KEY') && error.message.includes('NULL')) {
+                        resultDiv.innerHTML = '<span class="success">✓ Test 5 Passed</span>\n';
+                        resultDiv.innerHTML += 'Correctly rejected NULL PRIMARY KEY in UPDATE\n';
+                        resultDiv.innerHTML += 'Error message: ' + error.message;
+                    } else {
+                        resultDiv.innerHTML = '<span class="error">✗ Test 5 Failed</span>\n';
+                        resultDiv.innerHTML += 'Wrong error message: ' + error.message;
+                    }
+                }
+            } catch (error) {
+                resultDiv.innerHTML = '<span class="error">✗ Test 5 Failed</span>\n';
+                resultDiv.innerHTML += 'Setup error: ' + error.message;
+            }
+        }
+
+        async function test6() {
+            const resultDiv = document.getElementById('result6');
+            try {
+                await initDB();
+                
+                await db.execute(`
+                    CREATE TABLE users (
+                        id INTEGER PRIMARY KEY,
+                        name TEXT,
+                        email TEXT
+                    )
+                `);
+                
+                await db.execute(`INSERT INTO users (id, name, email) VALUES (1, 'Alice', 'alice@example.com')`);
+                await db.execute(`INSERT INTO users (id, name, email) VALUES (2, 'Bob', 'bob@example.com')`);
+                
+                // Try to update PRIMARY KEY to duplicate value
+                try {
+                    await db.execute(`UPDATE users SET id = 1 WHERE id = 2`);
+                    resultDiv.innerHTML = '<span class="error">✗ Test 6 Failed</span>\n';
+                    resultDiv.innerHTML += 'Expected error but update succeeded';
+                } catch (error) {
+                    if (error.message.includes('PRIMARY KEY') && error.message.includes('duplicate')) {
+                        resultDiv.innerHTML = '<span class="success">✓ Test 6 Passed</span>\n';
+                        resultDiv.innerHTML += 'Correctly rejected duplicate PRIMARY KEY in UPDATE\n';
+                        resultDiv.innerHTML += 'Error message: ' + error.message;
+                    } else {
+                        resultDiv.innerHTML = '<span class="error">✗ Test 6 Failed</span>\n';
+                        resultDiv.innerHTML += 'Wrong error message: ' + error.message;
+                    }
+                }
+            } catch (error) {
+                resultDiv.innerHTML = '<span class="error">✗ Test 6 Failed</span>\n';
+                resultDiv.innerHTML += 'Setup error: ' + error.message;
+            }
+        }
+
+        async function test7() {
+            const resultDiv = document.getElementById('result7');
+            try {
+                await initDB();
+                
+                await db.execute(`
+                    CREATE TABLE users (
+                        id INTEGER PRIMARY KEY,
+                        name TEXT,
+                        email TEXT
+                    )
+                `);
+                
+                await db.execute(`INSERT INTO users (id, name, email) VALUES (1, 'Alice', 'alice@example.com')`);
+                await db.execute(`INSERT INTO users (id, name, email) VALUES (2, 'Bob', 'bob@example.com')`);
+                
+                // Valid UPDATE: change non-PRIMARY KEY columns
+                await db.execute(`UPDATE users SET name = 'Alice Smith', email = 'alice.smith@example.com' WHERE id = 1`);
+                
+                // Valid UPDATE: change PRIMARY KEY to new unique value
+                await db.execute(`UPDATE users SET id = 10 WHERE id = 2`);
+                
+                // Verify data
+                const result = await db.execute('SELECT * FROM users ORDER BY id');
+                
+                if (result.rows.length === 2 &&
+                    result.rows[0].id === 1 && result.rows[0].name === 'Alice Smith' && result.rows[0].email === 'alice.smith@example.com' &&
+                    result.rows[1].id === 10 && result.rows[1].name === 'Bob') {
+                    resultDiv.innerHTML = '<span class="success">✓ Test 7 Passed</span>\n';
+                    resultDiv.innerHTML += 'Successfully updated records\n';
+                    resultDiv.innerHTML += JSON.stringify(result.rows, null, 2);
+                } else {
+                    resultDiv.innerHTML = '<span class="error">✗ Test 7 Failed</span>\n';
+                    resultDiv.innerHTML += 'Data verification failed\n';
+                    resultDiv.innerHTML += JSON.stringify(result, null, 2);
+                }
+            } catch (error) {
+                resultDiv.innerHTML = '<span class="error">✗ Test 7 Failed</span>\n';
+                resultDiv.innerHTML += 'Error: ' + error.message;
+            }
+        }
+
+        async function runAllTests() {
+            await test1();
+            await new Promise(resolve => setTimeout(resolve, 500));
+            await test2();
+            await new Promise(resolve => setTimeout(resolve, 500));
+            await test3();
+            await new Promise(resolve => setTimeout(resolve, 500));
+            await test4();
+            await new Promise(resolve => setTimeout(resolve, 500));
+            await test5();
+            await new Promise(resolve => setTimeout(resolve, 500));
+            await test6();
+            await new Promise(resolve => setTimeout(resolve, 500));
+            await test7();
+        }
+    </script>
+</body>
+</html>

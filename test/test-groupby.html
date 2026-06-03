@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JSDB GROUP BY and HAVING Test</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        .test-section {
+            background: white;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .test-case {
+            margin: 15px 0;
+            padding: 15px;
+            border-left: 4px solid #2196F3;
+            background-color: #f9f9f9;
+        }
+        .test-case h3 {
+            margin-top: 0;
+            color: #2196F3;
+        }
+        .sql-query {
+            background-color: #263238;
+            color: #aed581;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            overflow-x: auto;
+            margin: 10px 0;
+        }
+        .result {
+            margin: 10px 0;
+            padding: 10px;
+            background-color: #fff;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .success {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+        .error {
+            color: #f44336;
+            font-weight: bold;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 10px 0;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #4CAF50;
+            color: white;
+        }
+        tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+        .summary {
+            background-color: #e3f2fd;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        .summary h2 {
+            margin-top: 0;
+            color: #1976d2;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 JSDB GROUP BY and HAVING Test Suite</h1>
+    
+    <div class="summary" id="summary">
+        <h2>テスト実行中...</h2>
+    </div>
+
+    <div id="test-results"></div>
+
+    <script src="../jsdb.js"></script>
+    <script>
+        let testsPassed = 0;
+        let testsFailed = 0;
+        const resultsDiv = document.getElementById('test-results');
+
+        async function runTests() {
+            // データベースを削除して新規作成
+            const dbName = 'test_groupby_db';
+            await JSDB.deleteDatabase(dbName);
+            const db = new JSDB(dbName);
+
+            // テストデータの準備
+            await setupTestData(db);
+
+            // テストケースの実行
+            await testBasicGroupBy(db);
+            await testMultipleGroupBy(db);
+            await testGroupByWithAggregate(db);
+            await testGroupByWithWhere(db);
+            await testGroupByWithOrderBy(db);
+            await testGroupByWithLimit(db);
+            await testHavingClause(db);
+            await testHavingWithMultipleConditions(db);
+            await testGroupByWithAllAggregates(db);
+            await testEmptyGroups(db);
+
+            // サマリーの更新
+            updateSummary();
+        }
+
+        async function setupTestData(db) {
+            addTestSection('データベースのセットアップ');
+
+            // 売上テーブルの作成
+            await executeTest(
+                'CREATE TABLE sales',
+                `CREATE TABLE sales (
+                    id INTEGER,
+                    product TEXT,
+                    category TEXT,
+                    quantity INTEGER,
+                    price REAL,
+                    sale_date DATE
+                )`,
+                db
+            );
+
+            // テストデータの挿入
+            const salesData = [
+                [1, 'Laptop', 'Electronics', 5, 1000.00, '2024-01-15'],
+                [2, 'Mouse', 'Electronics', 20, 25.00, '2024-01-16'],
+                [3, 'Keyboard', 'Electronics', 15, 75.00, '2024-01-17'],
+                [4, 'Desk', 'Furniture', 3, 500.00, '2024-01-18'],
+                [5, 'Chair', 'Furniture', 8, 200.00, '2024-01-19'],
+                [6, 'Monitor', 'Electronics', 10, 300.00, '2024-01-20'],
+                [7, 'Table', 'Furniture', 2, 800.00, '2024-01-21'],
+                [8, 'Headphones', 'Electronics', 25, 50.00, '2024-01-22']
+            ];
+
+            for (const data of salesData) {
+                await db.execute(
+                    'INSERT INTO sales (id, product, category, quantity, price, sale_date) VALUES (?, ?, ?, ?, ?, ?)',
+                    data
+                );
+            }
+        }
+
+        async function testBasicGroupBy(db) {
+            addTestSection('基本的なGROUP BY');
+
+            await executeTest(
+                'カテゴリ別の商品数',
+                'SELECT category, COUNT(*) FROM sales GROUP BY category',
+                db,
+                (result) => {
+                    return result.rows.length === 2 &&
+                           result.rows.some(r => r.category === 'Electronics' && r['COUNT(*)'] === 5) &&
+                           result.rows.some(r => r.category === 'Furniture' && r['COUNT(*)'] === 3);
+                }
+            );
+        }
+
+        async function testMultipleGroupBy(db) {
+            addTestSection('複数カラムでのGROUP BY');
+
+            // 追加データ
+            await db.execute(
+                'INSERT INTO sales (id, product, category, quantity, price, sale_date) VALUES (?, ?, ?, ?, ?, ?)',
+                [9, 'Laptop Pro', 'Electronics', 3, 1500.00, '2024-01-23']
+            );
+
+            await executeTest(
+                'カテゴリと価格帯別のグループ化',
+                'SELECT category, COUNT(*) FROM sales GROUP BY category',
+                db,
+                (result) => result.rows.length >= 2
+            );
+        }
+
+        async function testGroupByWithAggregate(db) {
+            addTestSection('GROUP BYと集約関数');
+
+            await executeTest(
+                'カテゴリ別の合計数量',
+                'SELECT category, SUM(quantity) FROM sales GROUP BY category',
+                db,
+                (result) => {
+                    return result.rows.length === 2 &&
+                           result.rows.some(r => r.category === 'Electronics' && r['SUM(quantity)'] === 78) &&
+                           result.rows.some(r => r.category === 'Furniture' && r['SUM(quantity)'] === 13);
+                }
+            );
+
+            await executeTest(
+                'カテゴリ別の平均価格',
+                'SELECT category, AVG(price) FROM sales GROUP BY category',
+                db,
+                (result) => result.rows.length === 2
+            );
+
+            await executeTest(
+                'カテゴリ別の最高価格',
+                'SELECT category, MAX(price) FROM sales GROUP BY category',
+                db,
+                (result) => {
+                    return result.rows.some(r => r.category === 'Electronics' && r['MAX(price)'] === 1500) &&
+                           result.rows.some(r => r.category === 'Furniture' && r['MAX(price)'] === 800);
+                }
+            );
+
+            await executeTest(
+                'カテゴリ別の最低価格',
+                'SELECT category, MIN(price) FROM sales GROUP BY category',
+                db,
+                (result) => {
+                    return result.rows.some(r => r.category === 'Electronics' && r['MIN(price)'] === 25) &&
+                           result.rows.some(r => r.category === 'Furniture' && r['MIN(price)'] === 200);
+                }
+            );
+        }
+
+        async function testGroupByWithWhere(db) {
+            addTestSection('GROUP BYとWHERE句');
+
+            await executeTest(
+                '価格が100以上の商品のカテゴリ別集計',
+                'SELECT category, COUNT(*) FROM sales WHERE price >= 100 GROUP BY category',
+                db,
+                (result) => result.rows.length === 2
+            );
+        }
+
+        async function testGroupByWithOrderBy(db) {
+            addTestSection('GROUP BYとORDER BY');
+
+            await executeTest(
+                'カテゴリ別商品数を降順でソート',
+                'SELECT category, COUNT(*) FROM sales GROUP BY category ORDER BY COUNT(*) DESC',
+                db,
+                (result) => {
+                    return result.rows.length === 2 &&
+                           result.rows[0]['COUNT(*)'] >= result.rows[1]['COUNT(*)'];
+                }
+            );
+        }
+
+        async function testGroupByWithLimit(db) {
+            addTestSection('GROUP BYとLIMIT');
+
+            await executeTest(
+                'カテゴリ別集計の上位1件',
+                'SELECT category, COUNT(*) FROM sales GROUP BY category ORDER BY COUNT(*) DESC LIMIT 1',
+                db,
+                (result) => result.rows.length === 1
+            );
+        }
+
+        async function testHavingClause(db) {
+            addTestSection('HAVING句');
+
+            await executeTest(
+                '商品数が5個以上のカテゴリ',
+                'SELECT category, COUNT(*) FROM sales GROUP BY category HAVING COUNT(*) >= 5',
+                db,
+                (result) => {
+                    return result.rows.length === 1 &&
+                           result.rows[0].category === 'Electronics';
+                }
+            );
+
+            await executeTest(
+                '合計数量が20以上のカテゴリ',
+                'SELECT category, SUM(quantity) FROM sales GROUP BY category HAVING SUM(quantity) > 20',
+                db,
+                (result) => result.rows.length === 1
+            );
+
+            await executeTest(
+                '平均価格が300以上のカテゴリ',
+                'SELECT category, AVG(price) FROM sales GROUP BY category HAVING AVG(price) >= 300',
+                db,
+                (result) => result.rows.length === 2
+            );
+        }
+
+        async function testHavingWithMultipleConditions(db) {
+            addTestSection('HAVINGと複数条件');
+
+            await executeTest(
+                '商品数が3個以上で合計数量が15以上のカテゴリ',
+                'SELECT category, COUNT(*), SUM(quantity) FROM sales GROUP BY category HAVING COUNT(*) >= 3',
+                db,
+                (result) => result.rows.length >= 1
+            );
+        }
+
+        async function testGroupByWithAllAggregates(db) {
+            addTestSection('すべての集約関数を使用');
+
+            await executeTest(
+                'カテゴリ別の統計情報',
+                'SELECT category, COUNT(*), SUM(quantity), AVG(price), MIN(price), MAX(price) FROM sales GROUP BY category',
+                db,
+                (result) => {
+                    return result.rows.length === 2 &&
+                           result.rows.every(r => 
+                               r.hasOwnProperty('COUNT(*)') &&
+                               r.hasOwnProperty('SUM(quantity)') &&
+                               r.hasOwnProperty('AVG(price)') &&
+                               r.hasOwnProperty('MIN(price)') &&
+                               r.hasOwnProperty('MAX(price)')
+                           );
+                }
+            );
+        }
+
+        async function testEmptyGroups(db) {
+            addTestSection('空のグループ');
+
+            // 新しいテーブルを作成
+            await db.execute('CREATE TABLE empty_test (id INTEGER, category TEXT, value INTEGER)');
+            
+            await executeTest(
+                '空のテーブルでのGROUP BY',
+                'SELECT category, COUNT(*) FROM empty_test GROUP BY category',
+                db,
+                (result) => result.rows.length === 0
+            );
+        }
+
+        function addTestSection(title) {
+            const section = document.createElement('div');
+            section.className = 'test-section';
+            section.innerHTML = `<h2>${title}</h2>`;
+            resultsDiv.appendChild(section);
+        }
+
+        async function executeTest(title, sql, db, validator = null) {
+            const section = resultsDiv.lastElementChild;
+            const testCase = document.createElement('div');
+            testCase.className = 'test-case';
+            
+            let html = `<h3>${title}</h3>`;
+            html += `<div class="sql-query">${sql}</div>`;
+            
+            try {
+                const result = await db.execute(sql);
+                
+                // バリデーション
+                let passed = true;
+                if (validator) {
+                    passed = validator(result);
+                }
+                
+                if (passed) {
+                    testsPassed++;
+                    html += `<div class="result success">✓ テスト成功</div>`;
+                } else {
+                    testsFailed++;
+                    html += `<div class="result error">✗ テスト失敗: バリデーションエラー</div>`;
+                }
+                
+                // 結果の表示
+                if (result.rows && result.rows.length > 0) {
+                    html += '<div class="result">';
+                    html += `<strong>結果: ${result.rows.length}行</strong>`;
+                    html += '<table>';
+                    
+                    // ヘッダー
+                    html += '<tr>';
+                    for (const key in result.rows[0]) {
+                        html += `<th>${key}</th>`;
+                    }
+                    html += '</tr>';
+                    
+                    // データ
+                    for (const row of result.rows) {
+                        html += '<tr>';
+                        for (const key in row) {
+                            html += `<td>${row[key]}</td>`;
+                        }
+                        html += '</tr>';
+                    }
+                    
+                    html += '</table></div>';
+                } else if (result.success) {
+                    html += `<div class="result">実行成功</div>`;
+                }
+                
+            } catch (error) {
+                testsFailed++;
+                html += `<div class="result error">✗ エラー: ${error.message}</div>`;
+            }
+            
+            testCase.innerHTML = html;
+            section.appendChild(testCase);
+        }
+
+        function updateSummary() {
+            const summary = document.getElementById('summary');
+            const total = testsPassed + testsFailed;
+            const percentage = total > 0 ? Math.round((testsPassed / total) * 100) : 0;
+            
+            summary.innerHTML = `
+                <h2>📊 テスト結果サマリー</h2>
+                <p><strong>合計:</strong> ${total} テスト</p>
+                <p><strong class="success">成功:</strong> ${testsPassed} テスト</p>
+                <p><strong class="error">失敗:</strong> ${testsFailed} テスト</p>
+                <p><strong>成功率:</strong> ${percentage}%</p>
+            `;
+        }
+
+        // テストの実行
+        runTests().catch(error => {
+            console.error('Test execution failed:', error);
+            document.getElementById('summary').innerHTML = `
+                <h2>❌ テスト実行エラー</h2>
+                <p class="error">${error.message}</p>
+            `;
+        });
+    </script>
+</body>
+</html>

@@ -75,19 +75,41 @@ class Parser {
         this.expect('KEYWORD', 'CREATE');
         this.expect('KEYWORD', 'TABLE');
         
+        // IF NOT EXISTS のチェック
+        let ifNotExists = false;
+        if (this.current() && this.current().type === 'KEYWORD' && this.current().value === 'IF') {
+            this.advance();
+            this.expect('KEYWORD', 'NOT');
+            this.expect('KEYWORD', 'EXISTS');
+            ifNotExists = true;
+        }
+        
         const tableName = this.expect('IDENTIFIER').value;
         
         this.expect('SYMBOL', '(');
         
         const columns = [];
+        let primaryKey = null;
+        
         while (this.current() && this.current().value !== ')') {
             const columnName = this.expect('IDENTIFIER').value;
             const columnType = this.expect('KEYWORD').value;
             
-            columns.push({
+            const column = {
                 name: columnName,
-                type: columnType
-            });
+                type: columnType,
+                primaryKey: false
+            };
+            
+            // PRIMARY KEY 制約のチェック
+            if (this.current() && this.current().type === 'KEYWORD' && this.current().value === 'PRIMARY') {
+                this.advance();
+                this.expect('KEYWORD', 'KEY');
+                column.primaryKey = true;
+                primaryKey = columnName;
+            }
+            
+            columns.push(column);
             
             // カンマがあれば次のカラムへ
             if (this.current() && this.current().value === ',') {
@@ -100,7 +122,9 @@ class Parser {
         return {
             type: 'CREATE_TABLE',
             tableName: tableName,
-            columns: columns
+            columns: columns,
+            primaryKey: primaryKey,
+            ifNotExists: ifNotExists
         };
     }
 
@@ -182,15 +206,72 @@ class Parser {
     parseSelect() {
         this.expect('KEYWORD', 'SELECT');
         
-        // カラムリスト
+        // カラムリスト（集約関数対応、AS句対応）
         const columns = [];
         while (this.current() && this.current().value !== 'FROM') {
+            let column;
+            let alias = null;
+            
             if (this.current().type === 'OPERATOR' && this.current().value === '*') {
-                columns.push('*');
+                column = '*';
                 this.advance();
+            } else if (this.current().type === 'KEYWORD' &&
+                       ['COUNT', 'SUM', 'AVG', 'MIN', 'MAX'].includes(this.current().value)) {
+                // 集約関数
+                const funcName = this.current().value;
+                this.advance();
+                this.expect('SYMBOL', '(');
+                
+                let argument;
+                if (this.current().type === 'OPERATOR' && this.current().value === '*') {
+                    argument = '*';
+                    this.advance();
+                } else if (this.current().type === 'IDENTIFIER') {
+                    argument = this.current().value;
+                    this.advance();
+                } else {
+                    throw new Error(`Invalid argument for ${funcName}`);
+                }
+                
+                this.expect('SYMBOL', ')');
+                
+                column = {
+                    type: 'AGGREGATE',
+                    function: funcName,
+                    argument: argument
+                };
             } else if (this.current().type === 'IDENTIFIER') {
-                columns.push(this.current().value);
+                column = this.current().value;
                 this.advance();
+            }
+            
+            // AS句のチェック
+            if (this.current() && this.current().type === 'KEYWORD' && this.current().value === 'AS') {
+                this.advance();
+                // エイリアスはIDENTIFIERまたはKEYWORDを許可（予約語もエイリアスとして使用可能）
+                const token = this.current();
+                if (token && (token.type === 'IDENTIFIER' || token.type === 'KEYWORD')) {
+                    alias = token.value.toLowerCase(); // エイリアスは小文字に統一
+                    this.advance();
+                } else {
+                    throw new Error('Expected alias name after AS');
+                }
+            }
+            
+            // カラムとエイリアスを格納
+            if (alias) {
+                if (typeof column === 'object' && column.type === 'AGGREGATE') {
+                    column.alias = alias;
+                    columns.push(column);
+                } else {
+                    columns.push({
+                        type: 'COLUMN',
+                        name: column,
+                        alias: alias
+                    });
+                }
+            } else {
+                columns.push(column);
             }
             
             if (this.current() && this.current().value === ',') {
@@ -208,11 +289,53 @@ class Parser {
             whereCondition = this.parseWhereCondition();
         }
         
+        // GROUP BY句（オプション）
+        let groupBy = null;
+        if (this.current() && this.current().value === 'GROUP') {
+            this.advance();
+            this.expect('KEYWORD', 'BY');
+            groupBy = this.parseGroupBy();
+        }
+        
+        // HAVING句（オプション）
+        let having = null;
+        if (this.current() && this.current().value === 'HAVING') {
+            this.advance();
+            having = this.parseHaving();
+        }
+        
+        // ORDER BY句（オプション）
+        let orderBy = null;
+        if (this.current() && this.current().value === 'ORDER') {
+            this.advance();
+            this.expect('KEYWORD', 'BY');
+            orderBy = this.parseOrderBy();
+        }
+        
+        // LIMIT句（オプション）
+        let limit = null;
+        let offset = null;
+        if (this.current() && this.current().value === 'LIMIT') {
+            this.advance();
+            limit = parseInt(this.expect('NUMBER').value, 10);
+            
+            // OFFSET句（オプション）
+            if (this.current() && this.current().value === 'OFFSET') {
+                this.advance();
+                offset = parseInt(this.expect('NUMBER').value, 10);
+            }
+        }
+        
         return {
             type: 'SELECT',
             columns: columns,
             tableName: tableName,
-            where: whereCondition
+            where: whereCondition,
+            groupBy: groupBy,
+            having: having,
+            orderBy: orderBy,
+            limit: limit,
+            offset: offset
         };
     }
 
@@ -222,7 +345,6 @@ class Parser {
     parseUpdate() {
         this.expect('KEYWORD', 'UPDATE');
         const tableName = this.expect('IDENTIFIER').value;
-        
         this.expect('KEYWORD', 'SET');
         
         // SET句
@@ -291,6 +413,140 @@ class Parser {
             tableName: tableName,
             where: whereCondition
         };
+    }
+
+    /**
+     * ORDER BY句をパース
+     */
+    parseOrderBy() {
+        const orderByList = [];
+        
+        while (true) {
+            let columnName;
+            
+            // 集約関数の場合
+            if (this.current().type === 'KEYWORD' &&
+                ['COUNT', 'SUM', 'AVG', 'MIN', 'MAX'].includes(this.current().value)) {
+                const funcName = this.current().value;
+                this.advance();
+                this.expect('SYMBOL', '(');
+                
+                let argument;
+                if (this.current().type === 'OPERATOR' && this.current().value === '*') {
+                    argument = '*';
+                    this.advance();
+                } else if (this.current().type === 'IDENTIFIER') {
+                    argument = this.current().value;
+                    this.advance();
+                } else {
+                    throw new Error(`Invalid argument for ${funcName} in ORDER BY`);
+                }
+                
+                this.expect('SYMBOL', ')');
+                columnName = `${funcName}(${argument})`;
+            } else {
+                // 通常のカラム名
+                columnName = this.expect('IDENTIFIER').value;
+            }
+            
+            let direction = 'ASC'; // デフォルトは昇順
+            
+            // ASC または DESC の指定
+            if (this.current() && (this.current().value === 'ASC' || this.current().value === 'DESC')) {
+                direction = this.current().value;
+                this.advance();
+            }
+            
+            orderByList.push({
+                column: columnName,
+                direction: direction
+            });
+            
+            // 次のカラムがあるかチェック
+            if (this.current() && this.current().value === ',') {
+                this.advance();
+            } else {
+                break;
+            }
+        }
+        
+        return orderByList;
+    }
+
+    /**
+     * GROUP BY句をパース
+     */
+    parseGroupBy() {
+        const groupByList = [];
+        
+        while (true) {
+            const columnName = this.expect('IDENTIFIER').value;
+            groupByList.push(columnName);
+            
+            // 次のカラムがあるかチェック
+            if (this.current() && this.current().value === ',') {
+                this.advance();
+            } else {
+                break;
+            }
+        }
+        
+        return groupByList;
+    }
+
+    /**
+     * HAVING句をパース
+     */
+    parseHaving() {
+        // HAVING句は集約関数を含む条件式
+        // 例: HAVING COUNT(*) > 10
+        // 例: HAVING AVG(price) > 100
+        
+        const condition = {};
+        
+        // 集約関数
+        if (this.current().type === 'KEYWORD' && 
+            ['COUNT', 'SUM', 'AVG', 'MIN', 'MAX'].includes(this.current().value)) {
+            const funcName = this.current().value;
+            this.advance();
+            this.expect('SYMBOL', '(');
+            
+            let argument;
+            if (this.current().type === 'OPERATOR' && this.current().value === '*') {
+                argument = '*';
+                this.advance();
+            } else if (this.current().type === 'IDENTIFIER') {
+                argument = this.current().value;
+                this.advance();
+            } else {
+                throw new Error(`Invalid argument for ${funcName} in HAVING`);
+            }
+            
+            this.expect('SYMBOL', ')');
+            
+            condition.function = funcName;
+            condition.argument = argument;
+        } else {
+            throw new Error('HAVING clause requires an aggregate function');
+        }
+        
+        // 比較演算子
+        if (this.current() && this.current().type === 'OPERATOR') {
+            condition.operator = this.current().value;
+            this.advance();
+        } else {
+            throw new Error('HAVING clause requires a comparison operator');
+        }
+        
+        // 値
+        if (this.current() && this.current().type === 'NUMBER') {
+            condition.value = parseFloat(this.current().value);
+            this.advance();
+        } else {
+            throw new Error('HAVING clause requires a numeric value');
+        }
+        
+        return condition;
     }
 
     /**

@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JSDB 集約関数テスト</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 20px auto;
+            padding: 0 20px;
+        }
+        h1 {
+            color: #333;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .test-section h2 {
+            margin-top: 0;
+            color: #0066cc;
+        }
+        .success {
+            color: green;
+            font-weight: bold;
+        }
+        .error {
+            color: red;
+            font-weight: bold;
+        }
+        pre {
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 3px;
+            overflow-x: auto;
+        }
+        .test-result {
+            margin: 10px 0;
+            padding: 10px;
+            border-left: 4px solid #ddd;
+        }
+        .test-result.pass {
+            border-left-color: green;
+            background: #f0fff0;
+        }
+        .test-result.fail {
+            border-left-color: red;
+            background: #fff0f0;
+        }
+    </style>
+</head>
+<body>
+    <h1>JSDB 集約関数テスト</h1>
+    <div id="results"></div>
+
+    <script src="../jsdb.js"></script>
+    <script>
+        const results = document.getElementById('results');
+        let testCount = 0;
+        let passCount = 0;
+        let failCount = 0;
+
+        function addResult(title, passed, message, data = null) {
+            testCount++;
+            if (passed) passCount++;
+            else failCount++;
+
+            const div = document.createElement('div');
+            div.className = `test-result ${passed ? 'pass' : 'fail'}`;
+            div.innerHTML = `
+                <strong>${passed ? '✓' : '✗'} Test ${testCount}: ${title}</strong>
+                <p>${message}</p>
+                ${data ? `<pre>${JSON.stringify(data, null, 2)}</pre>` : ''}
+            `;
+            results.appendChild(div);
+        }
+
+        async function runTests() {
+            try {
+                // データベース初期化
+                const db = new JSDB('test_aggregate_db');
+                await db.execute('CREATE TABLE products (id INTEGER, name TEXT, price REAL, stock INTEGER, category TEXT)');
+
+                // テストデータを挿入
+                await db.execute("INSERT INTO products (id, name, price, stock, category) VALUES (1, 'Laptop', 999.99, 10, 'Electronics')");
+                await db.execute("INSERT INTO products (id, name, price, stock, category) VALUES (2, 'Mouse', 29.99, 50, 'Electronics')");
+                await db.execute("INSERT INTO products (id, name, price, stock, category) VALUES (3, 'Keyboard', 79.99, 30, 'Electronics')");
+                await db.execute("INSERT INTO products (id, name, price, stock, category) VALUES (4, 'Monitor', 299.99, 15, 'Electronics')");
+                await db.execute("INSERT INTO products (id, name, price, stock, category) VALUES (5, 'Desk', 199.99, 5, 'Furniture')");
+
+                // Test 1: COUNT(*)
+                let result = await db.execute('SELECT COUNT(*) FROM products');
+                addResult(
+                    'COUNT(*) - 全行数',
+                    result.rows[0]['COUNT(*)'] === 5,
+                    '全行数が正しくカウントされた',
+                    result.rows[0]
+                );
+
+                // Test 2: COUNT(column)
+                result = await db.execute('SELECT COUNT(price) FROM products');
+                addResult(
+                    'COUNT(column) - NULL を除く行数',
+                    result.rows[0]['COUNT(price)'] === 5,
+                    'NULL を除く行数が正しくカウントされた',
+                    result.rows[0]
+                );
+
+                // Test 3: SUM
+                result = await db.execute('SELECT SUM(price) FROM products');
+                const expectedSum = 999.99 + 29.99 + 79.99 + 299.99 + 199.99;
+                addResult(
+                    'SUM(column) - 合計',
+                    Math.abs(result.rows[0]['SUM(price)'] - expectedSum) < 0.01,
+                    '価格の合計が正しく計算された',
+                    result.rows[0]
+                );
+
+                // Test 4: AVG
+                result = await db.execute('SELECT AVG(price) FROM products');
+                const expectedAvg = expectedSum / 5;
+                addResult(
+                    'AVG(column) - 平均',
+                    Math.abs(result.rows[0]['AVG(price)'] - expectedAvg) < 0.01,
+                    '価格の平均が正しく計算された',
+                    result.rows[0]
+                );
+
+                // Test 5: MIN
+                result = await db.execute('SELECT MIN(price) FROM products');
+                addResult(
+                    'MIN(column) - 最小値',
+                    result.rows[0]['MIN(price)'] === 29.99,
+                    '最小価格が正しく取得された',
+                    result.rows[0]
+                );
+
+                // Test 6: MAX
+                result = await db.execute('SELECT MAX(price) FROM products');
+                addResult(
+                    'MAX(column) - 最大値',
+                    result.rows[0]['MAX(price)'] === 999.99,
+                    '最大価格が正しく取得された',
+                    result.rows[0]
+                );
+
+                // Test 7: MIN with INTEGER
+                result = await db.execute('SELECT MIN(stock) FROM products');
+                addResult(
+                    'MIN(INTEGER column)',
+                    result.rows[0]['MIN(stock)'] === 5,
+                    '最小在庫数が正しく取得された',
+                    result.rows[0]
+                );
+
+                // Test 8: MAX with INTEGER
+                result = await db.execute('SELECT MAX(stock) FROM products');
+                addResult(
+                    'MAX(INTEGER column)',
+                    result.rows[0]['MAX(stock)'] === 50,
+                    '最大在庫数が正しく取得された',
+                    result.rows[0]
+                );
+
+                // Test 9: COUNT with WHERE
+                result = await db.execute("SELECT COUNT(*) FROM products WHERE category = 'Electronics'");
+                addResult(
+                    'COUNT(*) with WHERE',
+                    result.rows[0]['COUNT(*)'] === 4,
+                    'WHERE 句と組み合わせた COUNT が正しく動作',
+                    result.rows[0]
+                );
+
+                // Test 10: SUM with WHERE
+                result = await db.execute("SELECT SUM(stock) FROM products WHERE category = 'Electronics'");
+                addResult(
+                    'SUM with WHERE',
+                    result.rows[0]['SUM(stock)'] === 105,
+                    'WHERE 句と組み合わせた SUM が正しく動作',
+                    result.rows[0]
+                );
+
+                // Test 11: AVG with WHERE
+                result = await db.execute("SELECT AVG(price) FROM products WHERE price > 100");
+                const highPriceAvg = (999.99 + 299.99 + 199.99) / 3;
+                addResult(
+                    'AVG with WHERE',
+                    Math.abs(result.rows[0]['AVG(price)'] - highPriceAvg) < 0.01,
+                    'WHERE 句と組み合わせた AVG が正しく動作',
+                    result.rows[0]
+                );
+
+                // Test 12: 複数の集約関数
+                result = await db.execute('SELECT COUNT(*), SUM(price), AVG(price), MIN(price), MAX(price) FROM products');
+                addResult(
+                    '複数の集約関数',
+                    result.rows[0]['COUNT(*)'] === 5 &&
+                    Math.abs(result.rows[0]['SUM(price)'] - expectedSum) < 0.01 &&
+                    result.rows[0]['MIN(price)'] === 29.99 &&
+                    result.rows[0]['MAX(price)'] === 999.99,
+                    '複数の集約関数が同時に正しく動作',
+                    result.rows[0]
+                );
+
+                // Test 13: NULL 値を含むテーブル
+                await db.execute('CREATE TABLE test_null (id INTEGER, value INTEGER)');
+                await db.execute('INSERT INTO test_null (id, value) VALUES (1, 10)');
+                await db.execute('INSERT INTO test_null (id, value) VALUES (2, NULL)');
+                await db.execute('INSERT INTO test_null (id, value) VALUES (3, 30)');
+                
+                result = await db.execute('SELECT COUNT(*), COUNT(value) FROM test_null');
+                addResult(
+                    'COUNT with NULL values',
+                    result.rows[0]['COUNT(*)'] === 3 && result.rows[0]['COUNT(value)'] === 2,
+                    'COUNT(*) は NULL を含み、COUNT(column) は NULL を除外',
+                    result.rows[0]
+                );
+
+                // Test 14: SUM with NULL
+                result = await db.execute('SELECT SUM(value) FROM test_null');
+                addResult(
+                    'SUM with NULL values',
+                    result.rows[0]['SUM(value)'] === 40,
+                    'SUM は NULL を無視して計算',
+                    result.rows[0]
+                );
+
+                // Test 15: AVG with NULL
+                result = await db.execute('SELECT AVG(value) FROM test_null');
+                addResult(
+                    'AVG with NULL values',
+                    result.rows[0]['AVG(value)'] === 20,
+                    'AVG は NULL を無視して計算',
+                    result.rows[0]
+                );
+
+                // Test 16: 空のテーブル
+                await db.execute('CREATE TABLE empty_table (id INTEGER, value INTEGER)');
+                result = await db.execute('SELECT COUNT(*) FROM empty_table');
+                addResult(
+                    'COUNT(*) on empty table',
+                    result.rows[0]['COUNT(*)'] === 0,
+                    '空のテーブルで COUNT(*) が 0 を返す',
+                    result.rows[0]
+                );
+
+                // Test 17: MIN/MAX on empty result
+                result = await db.execute('SELECT MIN(value), MAX(value) FROM empty_table');
+                addResult(
+                    'MIN/MAX on empty table',
+                    result.rows[0]['MIN(value)'] === null && result.rows[0]['MAX(value)'] === null,
+                    '空のテーブルで MIN/MAX が null を返す',
+                    result.rows[0]
+                );
+
+                // 最終結果
+                const summary = document.createElement('div');
+                summary.className = 'test-section';
+                summary.innerHTML = `
+                    <h2>テスト結果サマリー</h2>
+                    <p>総テスト数: ${testCount}</p>
+                    <p class="success">成功: ${passCount}</p>
+                    <p class="error">失敗: ${failCount}</p>
+                    <p><strong>${failCount === 0 ? 'すべてのテストに合格しました！' : 'いくつかのテストが失敗しました。'}</strong></p>
+                `;
+                results.appendChild(summary);
+
+            } catch (error) {
+                addResult('エラー', false, `テスト実行中にエラーが発生: ${error.message}`);
+                console.error(error);
+            }
+        }
+
+        // ページ読み込み後にテスト実行
+        window.addEventListener('load', runTests);
+    </script>
+</body>
+</html>

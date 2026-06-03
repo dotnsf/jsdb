@@ -123,18 +123,26 @@ class Executor {
      * CREATE TABLE文を実行
      */
     async executeCreateTable(statement) {
-        const { tableName, columns } = statement;
+        const { tableName, columns, primaryKey, ifNotExists } = statement;
 
         // テーブルが既に存在するかチェック
         if (this.dbManager.tableExists(tableName)) {
+            // IF NOT EXISTS が指定されている場合はエラーを出さずに成功を返す
+            if (ifNotExists) {
+                return {
+                    type: 'CREATE_TABLE',
+                    success: true,
+                    message: `Table '${tableName}' already exists (skipped)`
+                };
+            }
             throw new Error(`Table '${tableName}' already exists`);
         }
 
         // テーブルを作成
         await this.dbManager.createTable(tableName, columns);
 
-        // スキーマ情報を保存
-        await this.dbManager.saveTableSchema(tableName, columns);
+        // スキーマ情報を保存（PRIMARY KEY情報を含む）
+        await this.dbManager.saveTableSchema(tableName, columns, primaryKey);
 
         return {
             type: 'CREATE_TABLE',
@@ -160,6 +168,9 @@ class Executor {
             throw new Error(`Schema for table '${tableName}' not found`);
         }
 
+        // PRIMARY KEY情報を取得
+        const primaryKey = await this.dbManager.getTablePrimaryKey(tableName);
+
         // 複数行を挿入
         const insertedIds = [];
         for (const values of valuesList) {
@@ -173,6 +184,21 @@ class Executor {
                 const columnSchema = schema.find(col => col.name === columnName);
                 if (!columnSchema) {
                     throw new Error(`Column '${columnName}' does not exist in table '${tableName}'`);
+                }
+
+                // PRIMARY KEY制約のチェック
+                if (primaryKey && columnName === primaryKey) {
+                    // NULL値の禁止
+                    if (value === null || value === undefined) {
+                        throw new Error(`PRIMARY KEY column '${columnName}' cannot be NULL`);
+                    }
+                    
+                    // 重複チェック
+                    const existingRows = await this.dbManager.getAll(tableName);
+                    const duplicate = existingRows.find(row => row[columnName] === value);
+                    if (duplicate) {
+                        throw new Error(`PRIMARY KEY constraint violation: duplicate value '${value}' for column '${columnName}'`);
+                    }
                 }
 
                 // データ型の検証と変換
@@ -208,7 +234,7 @@ class Executor {
      * SELECT文を実行
      */
     async executeSelect(statement) {
-        const { tableName, columns, where } = statement;
+        const { tableName, columns, where, groupBy, having, orderBy, limit, offset } = statement;
 
         // テーブルの存在チェック
         if (!this.dbManager.tableExists(tableName)) {
@@ -223,12 +249,73 @@ class Executor {
             rows = rows.filter(row => evaluateWhereCondition(row, where));
         }
 
-        // カラムの選択
+        // GROUP BY句の処理
+        if (groupBy && groupBy.length > 0) {
+            return this.executeGroupBy(rows, columns, groupBy, having, orderBy, limit, offset);
+        }
+
+        // 集約関数のチェック（GROUP BY なし）
+        const hasAggregates = columns.some(col => typeof col === 'object' && col.type === 'AGGREGATE');
+
+        if (hasAggregates) {
+            // 集約関数の処理（GROUP BY なし）
+            const result = {};
+            for (const col of columns) {
+                if (typeof col === 'object' && col.type === 'AGGREGATE') {
+                    const { function: funcName, argument, alias } = col;
+                    const columnName = alias || `${funcName}(${argument})`;
+                    result[columnName] = this.calculateAggregate(funcName, argument, rows);
+                }
+            }
+            return {
+                type: 'SELECT',
+                success: true,
+                rows: [result],
+                rowCount: 1
+            };
+        }
+
+        // ORDER BY句でソート
+        if (orderBy && orderBy.length > 0) {
+            rows.sort((a, b) => {
+                for (const order of orderBy) {
+                    const { column, direction } = order;
+                    const aVal = a[column];
+                    const bVal = b[column];
+                    
+                    let comparison = 0;
+                    if (aVal < bVal) comparison = -1;
+                    else if (aVal > bVal) comparison = 1;
+                    
+                    if (comparison !== 0) {
+                        return direction === 'DESC' ? -comparison : comparison;
+                    }
+                }
+                return 0;
+            });
+        }
+
+        // OFFSET と LIMIT を適用
+        if (offset !== null && offset !== undefined) {
+            rows = rows.slice(offset);
+        }
+        if (limit !== null && limit !== undefined) {
+            rows = rows.slice(0, limit);
+        }
+
+        // カラムの選択（エイリアス対応）
         if (!columns.includes('*')) {
             rows = rows.map(row => {
                 const selectedRow = {};
                 for (const col of columns) {
-                    if (row.hasOwnProperty(col)) {
+                    if (typeof col === 'object' && col.type === 'COLUMN') {
+                        // エイリアス付きカラム
+                        const { name, alias } = col;
+                        if (row.hasOwnProperty(name)) {
+                            selectedRow[alias] = row[name];
+                        }
+                    } else if (typeof col === 'string' && row.hasOwnProperty(col)) {
+                        // 通常のカラム
                         selectedRow[col] = row[col];
                     }
                 }
@@ -242,6 +329,173 @@ class Executor {
             rows: rows,
             rowCount: rows.length
         };
+    }
+
+    /**
+     * 集約関数を計算
+     */
+    calculateAggregate(funcName, argument, rows) {
+        switch (funcName) {
+            case 'COUNT':
+                if (argument === '*') {
+                    return rows.length;
+                } else {
+                    // NULL を除いてカウント
+                    return rows.filter(row => row[argument] !== null && row[argument] !== undefined).length;
+                }
+            
+            case 'SUM':
+                return rows.reduce((sum, row) => {
+                    const value = row[argument];
+                    if (value !== null && value !== undefined && typeof value === 'number') {
+                        return sum + value;
+                    }
+                    return sum;
+                }, 0);
+            
+            case 'AVG':
+                const values = rows.filter(row => {
+                    const value = row[argument];
+                    return value !== null && value !== undefined && typeof value === 'number';
+                }).map(row => row[argument]);
+                
+                if (values.length === 0) return null;
+                return values.reduce((sum, val) => sum + val, 0) / values.length;
+            
+            case 'MIN':
+                const minValues = rows.filter(row => {
+                    const value = row[argument];
+                    return value !== null && value !== undefined;
+                }).map(row => row[argument]);
+                
+                if (minValues.length === 0) return null;
+                return Math.min(...minValues);
+            
+            case 'MAX':
+                const maxValues = rows.filter(row => {
+                    const value = row[argument];
+                    return value !== null && value !== undefined;
+                }).map(row => row[argument]);
+                
+                if (maxValues.length === 0) return null;
+                return Math.max(...maxValues);
+            
+            default:
+                throw new Error(`Unsupported aggregate function: ${funcName}`);
+        }
+    }
+
+    /**
+     * GROUP BY句を実行
+     */
+    executeGroupBy(rows, columns, groupBy, having, orderBy, limit, offset) {
+        // グループ化
+        const groups = {};
+        
+        for (const row of rows) {
+            // グループキーを生成
+            const groupKey = groupBy.map(col => row[col]).join('|');
+            
+            if (!groups[groupKey]) {
+                groups[groupKey] = [];
+            }
+            groups[groupKey].push(row);
+        }
+        
+        // 各グループに対して集約関数を計算
+        const results = [];
+        for (const groupKey in groups) {
+            const groupRows = groups[groupKey];
+            const result = {};
+            
+            // グループ化カラムの値を設定
+            for (let i = 0; i < groupBy.length; i++) {
+                const colName = groupBy[i];
+                result[colName] = groupRows[0][colName];
+            }
+            
+            // 集約関数を計算（エイリアス対応）
+            for (const col of columns) {
+                if (typeof col === 'object' && col.type === 'AGGREGATE') {
+                    const { function: funcName, argument, alias } = col;
+                    const columnName = alias || `${funcName}(${argument})`;
+                    result[columnName] = this.calculateAggregate(funcName, argument, groupRows);
+                } else if (typeof col === 'object' && col.type === 'COLUMN') {
+                    // エイリアス付きカラム
+                    const { name, alias } = col;
+                    if (!groupBy.includes(name)) {
+                        result[alias] = groupRows[0][name];
+                    }
+                } else if (typeof col === 'string' && !groupBy.includes(col)) {
+                    // GROUP BY に含まれないカラムは無視（または最初の値を使用）
+                    result[col] = groupRows[0][col];
+                }
+            }
+            
+            results.push(result);
+        }
+        
+        // HAVING句でフィルタリング
+        let filteredResults = results;
+        if (having) {
+            filteredResults = results.filter(result => {
+                const { function: funcName, argument, operator, value } = having;
+                const columnName = `${funcName}(${argument})`;
+                const aggregateValue = result[columnName];
+                
+                return this.compareValues(aggregateValue, operator, value);
+            });
+        }
+        
+        // ORDER BY句でソート
+        if (orderBy && orderBy.length > 0) {
+            filteredResults.sort((a, b) => {
+                for (const order of orderBy) {
+                    const { column, direction } = order;
+                    const aVal = a[column];
+                    const bVal = b[column];
+                    
+                    let comparison = 0;
+                    if (aVal < bVal) comparison = -1;
+                    else if (aVal > bVal) comparison = 1;
+                    
+                    if (comparison !== 0) {
+                        return direction === 'DESC' ? -comparison : comparison;
+                    }
+                }
+                return 0;
+            });
+        }
+        
+        // OFFSET と LIMIT を適用
+        if (offset !== null && offset !== undefined) {
+            filteredResults = filteredResults.slice(offset);
+        }
+        if (limit !== null && limit !== undefined) {
+            filteredResults = filteredResults.slice(0, limit);
+        }
+        
+        return {
+            type: 'SELECT',
+            success: true,
+            rows: filteredResults,
+            rowCount: filteredResults.length
+        };
+    }
+
+    /**
+     * 値を比較
+     */
+    compareValues(left, operator, right) {
+        switch (operator) {
+            case '=': return left === right;
+            case '!=': return left !== right;
+            case '>': return left > right;
+            case '<': return left < right;
+            case '>=': return left >= right;
+            case '<=': return left <= right;
+            default: return false;
+        }
     }
 
     /**
@@ -261,6 +515,9 @@ class Executor {
             throw new Error(`Schema for table '${tableName}' not found`);
         }
 
+        // PRIMARY KEY情報を取得
+        const primaryKey = await this.dbManager.getTablePrimaryKey(tableName);
+
         // 全データを取得
         let rows = await this.dbManager.getAll(tableName);
 
@@ -279,6 +536,20 @@ class Executor {
                 const columnSchema = schema.find(col => col.name === columnName);
                 if (!columnSchema) {
                     throw new Error(`Column '${columnName}' does not exist in table '${tableName}'`);
+                }
+
+                // PRIMARY KEY制約のチェック
+                if (primaryKey && columnName === primaryKey) {
+                    // NULL値の禁止
+                    if (value === null || value === undefined) {
+                        throw new Error(`PRIMARY KEY column '${columnName}' cannot be NULL`);
+                    }
+                    
+                    // 重複チェック（自分自身以外）
+                    const duplicate = rows.find(r => r.__id__ !== row.__id__ && r[columnName] === value);
+                    if (duplicate) {
+                        throw new Error(`PRIMARY KEY constraint violation: duplicate value '${value}' for column '${columnName}'`);
+                    }
                 }
 
                 // データ型の検証と変換
