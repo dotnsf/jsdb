@@ -316,6 +316,41 @@ class IndexedDBManager {
     }
 
     /**
+     * テーブルを削除
+     */
+    async dropTable(tableName) {
+        // バージョンを上げて再オープン
+        this.version++;
+        this.db.close();
+
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(this.dbName, this.version);
+
+            request.onerror = () => {
+                reject(new Error(`Failed to drop table: ${request.error}`));
+            };
+
+            request.onsuccess = () => {
+                this.db = request.result;
+                
+                // メタデータからスキーマ情報を削除
+                this.deleteTableSchema(tableName).then(() => {
+                    resolve();
+                }).catch(reject);
+            };
+
+            request.onupgradeneeded = (event) => {
+                const db = event.target.result;
+
+                // テーブルストアを削除
+                if (db.objectStoreNames.contains(tableName)) {
+                    db.deleteObjectStore(tableName);
+                }
+            };
+        });
+    }
+
+    /**
      * テーブルのスキーマ情報を保存
      */
     async saveTableSchema(tableName, columns, primaryKey = null) {
@@ -332,6 +367,21 @@ class IndexedDBManager {
 
             request.onsuccess = () => resolve();
             request.onerror = () => reject(new Error(`Failed to save schema: ${request.error}`));
+        });
+    }
+
+    /**
+     * テーブルのスキーマ情報を削除
+     */
+    async deleteTableSchema(tableName) {
+        const transaction = this.db.transaction(['__metadata__'], 'readwrite');
+        const store = transaction.objectStore('__metadata__');
+
+        return new Promise((resolve, reject) => {
+            const request = store.delete(`schema_${tableName}`);
+
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(new Error(`Failed to delete schema: ${request.error}`));
         });
     }
 
@@ -375,10 +425,70 @@ class IndexedDBManager {
     }
 
     /**
+     * テーブルのスキーマ情報を更新
+     */
+    async updateTableSchema(tableName, schema) {
+        const transaction = this.db.transaction(['__metadata__'], 'readwrite');
+        const store = transaction.objectStore('__metadata__');
+
+        return new Promise((resolve, reject) => {
+            const request = store.put({
+                key: `schema_${tableName}`,
+                tableName: tableName,
+                columns: schema.columns,
+                primaryKey: schema.primaryKey || null
+            });
+
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(new Error(`Failed to update schema: ${request.error}`));
+        });
+    }
+
+    /**
      * テーブルが存在するかチェック
      */
     tableExists(tableName) {
         return this.db.objectStoreNames.contains(tableName);
+    }
+
+    /**
+     * 全テーブル名の一覧を取得
+     */
+    getAllTableNames() {
+        const tableNames = [];
+        for (let i = 0; i < this.db.objectStoreNames.length; i++) {
+            const name = this.db.objectStoreNames[i];
+            // __metadata__ は除外
+            if (name !== '__metadata__') {
+                tableNames.push(name);
+            }
+        }
+        return tableNames;
+    }
+
+    /**
+     * テーブルの詳細情報を取得（スキーマとPRIMARY KEY情報を含む）
+     */
+    async getTableInfo(tableName) {
+        const transaction = this.db.transaction(['__metadata__'], 'readonly');
+        const store = transaction.objectStore('__metadata__');
+
+        return new Promise((resolve, reject) => {
+            const request = store.get(`schema_${tableName}`);
+
+            request.onsuccess = () => {
+                if (request.result) {
+                    resolve({
+                        tableName: request.result.tableName,
+                        columns: request.result.columns,
+                        primaryKey: request.result.primaryKey
+                    });
+                } else {
+                    resolve(null);
+                }
+            };
+            request.onerror = () => reject(new Error(`Failed to get table info: ${request.error}`));
+        });
     }
 
     /**
@@ -481,11 +591,11 @@ class Tokenizer {
                 this.tokenizeNumber();
             }
             // 識別子またはキーワード
-            else if (this.isAlpha(char)) {
+            else if (this.isIdentifierStart(char)) {
                 this.tokenizeIdentifier();
             }
             // 名前付きプレースホルダー (:name)
-            else if (char === ':' && this.isAlpha(this.sql[this.position + 1])) {
+            else if (char === ':' && this.isIdentifierStart(this.sql[this.position + 1])) {
                 this.tokenizeNamedPlaceholder();
             }
             // 位置指定プレースホルダー (?)
@@ -589,7 +699,7 @@ class Tokenizer {
         while (this.position < this.sql.length) {
             const char = this.sql[this.position];
 
-            if (this.isAlphaNumeric(char) || char === '_') {
+            if (this.isIdentifierPart(char)) {
                 value += char;
                 this.position++;
             } else {
@@ -600,13 +710,15 @@ class Tokenizer {
         const upperValue = value.toUpperCase();
         const keywords = [
             'SELECT', 'FROM', 'WHERE', 'INSERT', 'INTO', 'VALUES',
-            'UPDATE', 'SET', 'DELETE', 'CREATE', 'TABLE',
+            'UPDATE', 'SET', 'DELETE', 'CREATE', 'TABLE', 'DROP',
             'AND', 'OR', 'NOT', 'NULL', 'LIKE', 'AS',
             'ORDER', 'BY', 'ASC', 'DESC', 'LIMIT', 'OFFSET',
             'GROUP', 'HAVING',
             'COUNT', 'SUM', 'AVG', 'MIN', 'MAX',
             'INTEGER', 'TEXT', 'REAL', 'BLOB', 'DATE', 'DATETIME',
-            'PRIMARY', 'KEY', 'IF', 'EXISTS'
+            'PRIMARY', 'KEY', 'IF', 'EXISTS', 'UNIQUE', 'DEFAULT',
+            'CURRENT_TIMESTAMP', 'CURRENT_DATE', 'CURRENT_TIME',
+            'ALTER', 'ADD', 'COLUMN'
         ];
 
         if (keywords.includes(upperValue)) {
@@ -622,7 +734,7 @@ class Tokenizer {
         this.position++; // ':' をスキップ
         let name = '';
 
-        while (this.position < this.sql.length && this.isAlphaNumeric(this.sql[this.position])) {
+        while (this.position < this.sql.length && this.isIdentifierPart(this.sql[this.position])) {
             name += this.sql[this.position];
             this.position++;
         }
@@ -654,7 +766,7 @@ class Tokenizer {
     }
 
     /**
-     * 文字かチェック
+     * 文字かチェック（後方互換性のため残す）
      */
     isAlpha(char) {
         return /[a-zA-Z]/.test(char);
@@ -668,10 +780,37 @@ class Tokenizer {
     }
 
     /**
-     * 英数字かチェック
+     * 英数字かチェック（後方互換性のため残す）
      */
     isAlphaNumeric(char) {
         return /[a-zA-Z0-9]/.test(char);
+    }
+
+    /**
+     * 識別子の開始文字かチェック（Unicode対応）
+     * 英字、アンダースコア、またはUnicode文字（日本語、中国語など）
+     */
+    isIdentifierStart(char) {
+        if (!char) return false;
+        // ASCII英字とアンダースコア
+        if (/[a-zA-Z_]/.test(char)) return true;
+        // Unicode文字（日本語、中国語、韓国語、アラビア語など）
+        // 基本的に制御文字、空白、記号以外のすべてのUnicode文字を許可
+        const code = char.charCodeAt(0);
+        return code > 127; // ASCII範囲外のすべての文字を許可
+    }
+
+    /**
+     * 識別子の一部として使える文字かチェック（Unicode対応）
+     * 英数字、アンダースコア、またはUnicode文字
+     */
+    isIdentifierPart(char) {
+        if (!char) return false;
+        // ASCII英数字とアンダースコア
+        if (/[a-zA-Z0-9_]/.test(char)) return true;
+        // Unicode文字
+        const code = char.charCodeAt(0);
+        return code > 127; // ASCII範囲外のすべての文字を許可
     }
 
     /**
@@ -738,6 +877,10 @@ class Parser {
         switch (firstToken.value) {
             case 'CREATE':
                 return this.parseCreate();
+            case 'DROP':
+                return this.parseDrop();
+            case 'ALTER':
+                return this.parseAlter();
             case 'INSERT':
                 return this.parseInsert();
             case 'SELECT':
@@ -781,15 +924,60 @@ class Parser {
             const column = {
                 name: columnName,
                 type: columnType,
-                primaryKey: false
+                primaryKey: false,
+                notNull: false,
+                unique: false,
+                defaultValue: null
             };
             
-            // PRIMARY KEY 制約のチェック
-            if (this.current() && this.current().type === 'KEYWORD' && this.current().value === 'PRIMARY') {
-                this.advance();
-                this.expect('KEYWORD', 'KEY');
-                column.primaryKey = true;
-                primaryKey = columnName;
+            // 制約のチェック（PRIMARY KEY, NOT NULL, UNIQUE, DEFAULT）
+            while (this.current() && this.current().type === 'KEYWORD') {
+                const keyword = this.current().value;
+                
+                if (keyword === 'PRIMARY') {
+                    this.advance();
+                    this.expect('KEYWORD', 'KEY');
+                    column.primaryKey = true;
+                    primaryKey = columnName;
+                } else if (keyword === 'NOT') {
+                    this.advance();
+                    this.expect('KEYWORD', 'NULL');
+                    column.notNull = true;
+                } else if (keyword === 'UNIQUE') {
+                    this.advance();
+                    column.unique = true;
+                } else if (keyword === 'DEFAULT') {
+                    this.advance();
+                    // DEFAULT値の解析
+                    const token = this.current();
+                    if (token.type === 'STRING') {
+                        column.defaultValue = { type: 'STRING', value: token.value };
+                        this.advance();
+                    } else if (token.type === 'NUMBER') {
+                        column.defaultValue = { type: 'NUMBER', value: token.value };
+                        this.advance();
+                    } else if (token.type === 'KEYWORD') {
+                        if (token.value === 'NULL') {
+                            column.defaultValue = { type: 'NULL', value: null };
+                            this.advance();
+                        } else if (token.value === 'CURRENT_TIMESTAMP') {
+                            column.defaultValue = { type: 'FUNCTION', value: 'CURRENT_TIMESTAMP' };
+                            this.advance();
+                        } else if (token.value === 'CURRENT_DATE') {
+                            column.defaultValue = { type: 'FUNCTION', value: 'CURRENT_DATE' };
+                            this.advance();
+                        } else if (token.value === 'CURRENT_TIME') {
+                            column.defaultValue = { type: 'FUNCTION', value: 'CURRENT_TIME' };
+                            this.advance();
+                        } else {
+                            throw new Error(`Unexpected DEFAULT value: ${token.value}`);
+                        }
+                    } else {
+                        throw new Error(`Unexpected DEFAULT value type: ${token.type}`);
+                    }
+                } else {
+                    break;
+                }
             }
             
             columns.push(column);
@@ -1099,6 +1287,31 @@ class Parser {
     }
 
     /**
+     * DROP TABLE文をパース
+     * DROP TABLE [IF EXISTS] table_name
+     */
+    parseDrop() {
+        this.expect('KEYWORD', 'DROP');
+        this.expect('KEYWORD', 'TABLE');
+        
+        // IF EXISTS のチェック
+        let ifExists = false;
+        if (this.current() && this.current().type === 'KEYWORD' && this.current().value === 'IF') {
+            this.advance(); // IF
+            this.expect('KEYWORD', 'EXISTS');
+            ifExists = true;
+        }
+        
+        const tableName = this.expect('IDENTIFIER').value;
+        
+        return {
+            type: 'DROP_TABLE',
+            tableName: tableName,
+            ifExists: ifExists
+        };
+    }
+
+    /**
      * ORDER BY句をパース
      */
     parseOrderBy() {
@@ -1337,6 +1550,114 @@ class Parser {
             right: value
         };
     }
+
+    /**
+     * ALTER TABLE文をパース
+     */
+    parseAlter() {
+        this.expect('KEYWORD', 'ALTER');
+        this.expect('KEYWORD', 'TABLE');
+        
+        const tableName = this.expect('IDENTIFIER').value;
+        
+        // ADD または DROP をチェック
+        const actionToken = this.expect('KEYWORD');
+        const action = actionToken.value;
+        
+        if (action === 'ADD') {
+            // COLUMN キーワードはオプション
+            if (this.current() && this.current().type === 'KEYWORD' && this.current().value === 'COLUMN') {
+                this.advance();
+            }
+            
+            // カラム定義の解析（CREATE TABLEと同じロジック）
+            const columnName = this.expect('IDENTIFIER').value;
+            const columnType = this.expect('KEYWORD').value;
+            
+            const column = {
+                name: columnName,
+                type: columnType,
+                primaryKey: false,
+                notNull: false,
+                unique: false,
+                defaultValue: null
+            };
+            
+            // 制約のチェック（PRIMARY KEY, NOT NULL, UNIQUE, DEFAULT）
+            while (this.current() && this.current().type === 'KEYWORD') {
+                const keyword = this.current().value;
+                
+                if (keyword === 'PRIMARY') {
+                    this.advance();
+                    this.expect('KEYWORD', 'KEY');
+                    column.primaryKey = true;
+                } else if (keyword === 'NOT') {
+                    this.advance();
+                    this.expect('KEYWORD', 'NULL');
+                    column.notNull = true;
+                } else if (keyword === 'UNIQUE') {
+                    this.advance();
+                    column.unique = true;
+                } else if (keyword === 'DEFAULT') {
+                    this.advance();
+                    // DEFAULT値の解析
+                    const token = this.current();
+                    if (token.type === 'STRING') {
+                        column.defaultValue = { type: 'STRING', value: token.value };
+                        this.advance();
+                    } else if (token.type === 'NUMBER') {
+                        column.defaultValue = { type: 'NUMBER', value: token.value };
+                        this.advance();
+                    } else if (token.type === 'KEYWORD') {
+                        if (token.value === 'NULL') {
+                            column.defaultValue = { type: 'NULL', value: null };
+                            this.advance();
+                        } else if (token.value === 'CURRENT_TIMESTAMP') {
+                            column.defaultValue = { type: 'FUNCTION', value: 'CURRENT_TIMESTAMP' };
+                            this.advance();
+                        } else if (token.value === 'CURRENT_DATE') {
+                            column.defaultValue = { type: 'FUNCTION', value: 'CURRENT_DATE' };
+                            this.advance();
+                        } else if (token.value === 'CURRENT_TIME') {
+                            column.defaultValue = { type: 'FUNCTION', value: 'CURRENT_TIME' };
+                            this.advance();
+                        } else {
+                            throw new Error(`Unexpected DEFAULT value: ${token.value}`);
+                        }
+                    } else {
+                        throw new Error(`Unexpected DEFAULT value type: ${token.type}`);
+                    }
+                } else {
+                    break;
+                }
+            }
+            
+            return {
+                type: 'ALTER_TABLE',
+                action: 'ADD_COLUMN',
+                tableName: tableName,
+                column: column
+            };
+            
+        } else if (action === 'DROP') {
+            // COLUMN キーワードはオプション
+            if (this.current() && this.current().type === 'KEYWORD' && this.current().value === 'COLUMN') {
+                this.advance();
+            }
+            
+            const columnName = this.expect('IDENTIFIER').value;
+            
+            return {
+                type: 'ALTER_TABLE',
+                action: 'DROP_COLUMN',
+                tableName: tableName,
+                columnName: columnName
+            };
+            
+        } else {
+            throw new Error(`Unsupported ALTER TABLE action: ${action}`);
+        }
+    }
 }
 /**
  * Executor - パースされたSQL文を実行するクラス
@@ -1360,6 +1681,10 @@ class Executor {
         switch (statement.type) {
             case 'CREATE_TABLE':
                 return await this.executeCreateTable(statement);
+            case 'DROP_TABLE':
+                return await this.executeDropTable(statement);
+            case 'ALTER_TABLE':
+                return await this.executeAlterTable(statement);
             case 'INSERT':
                 return await this.executeInsert(statement);
             case 'SELECT':
@@ -1492,6 +1817,35 @@ class Executor {
     }
 
     /**
+     * DROP TABLE文を実行
+     */
+    async executeDropTable(statement) {
+        const { tableName, ifExists } = statement;
+
+        // テーブルが存在するかチェック
+        if (!this.dbManager.tableExists(tableName)) {
+            // IF EXISTS が指定されている場合はエラーを出さずに成功を返す
+            if (ifExists) {
+                return {
+                    type: 'DROP_TABLE',
+                    success: true,
+                    message: `Table '${tableName}' does not exist (skipped)`
+                };
+            }
+            throw new Error(`Table '${tableName}' does not exist`);
+        }
+
+        // テーブルを削除
+        await this.dbManager.dropTable(tableName);
+
+        return {
+            type: 'DROP_TABLE',
+            success: true,
+            message: `Table '${tableName}' dropped successfully`
+        };
+    }
+
+    /**
      * INSERT文を実行（バルクインサート対応）
      */
     async executeInsert(statement) {
@@ -1541,6 +1895,20 @@ class Executor {
                     }
                 }
 
+                // NOT NULL制約のチェック
+                if (columnSchema.notNull && (value === null || value === undefined)) {
+                    throw new Error(`NOT NULL constraint violation: column '${columnName}' cannot be NULL`);
+                }
+
+                // UNIQUE制約のチェック
+                if (columnSchema.unique && value !== null && value !== undefined) {
+                    const existingRows = await this.dbManager.getAll(tableName);
+                    const duplicate = existingRows.find(row => row[columnName] === value);
+                    if (duplicate) {
+                        throw new Error(`UNIQUE constraint violation: duplicate value '${value}' for column '${columnName}'`);
+                    }
+                }
+
                 // データ型の検証と変換
                 if (value !== null) {
                     if (!validateDataType(value, columnSchema.type)) {
@@ -1554,6 +1922,35 @@ class Executor {
                     }
                 } else {
                     data[columnName] = null;
+                }
+            }
+
+            // 指定されていないカラムにデフォルト値を適用
+            for (const columnSchema of schema) {
+                const columnName = columnSchema.name;
+                
+                // カラムが指定されていない場合
+                if (!columns.includes(columnName)) {
+                    if (columnSchema.defaultValue) {
+                        // デフォルト値を適用
+                        const defaultVal = this.evaluateDefaultValue(columnSchema.defaultValue);
+                        
+                        // データ型の検証と変換
+                        if (defaultVal !== null) {
+                            if (!validateDataType(defaultVal, columnSchema.type)) {
+                                throw new Error(`Invalid default value type for column '${columnName}': expected ${columnSchema.type}`);
+                            }
+                            data[columnName] = convertToDataType(defaultVal, columnSchema.type);
+                        } else {
+                            data[columnName] = null;
+                        }
+                    } else if (columnSchema.notNull) {
+                        // NOT NULL制約があるのにデフォルト値もない場合はエラー
+                        throw new Error(`NOT NULL constraint violation: column '${columnName}' requires a value`);
+                    } else {
+                        // デフォルト値がない場合はNULL
+                        data[columnName] = null;
+                    }
                 }
             }
 
@@ -1892,6 +2289,20 @@ class Executor {
                     }
                 }
 
+                // NOT NULL制約のチェック
+                if (columnSchema.notNull && (value === null || value === undefined)) {
+                    throw new Error(`NOT NULL constraint violation: column '${columnName}' cannot be NULL`);
+                }
+
+                // UNIQUE制約のチェック
+                if (columnSchema.unique && value !== null && value !== undefined) {
+                    // 重複チェック（自分自身以外）
+                    const duplicate = rows.find(r => r.__id__ !== row.__id__ && r[columnName] === value);
+                    if (duplicate) {
+                        throw new Error(`UNIQUE constraint violation: duplicate value '${value}' for column '${columnName}'`);
+                    }
+                }
+
                 // データ型の検証と変換
                 if (value !== null) {
                     if (!validateDataType(value, columnSchema.type)) {
@@ -1952,6 +2363,206 @@ class Executor {
             success: true,
             rowCount: deletedCount
         };
+    }
+
+    /**
+     * ALTER TABLE 文を実行
+     */
+    async executeAlterTable(ast) {
+        const { tableName, action, column, columnName } = ast;
+
+        if (action === 'ADD_COLUMN') {
+            return await this.executeAddColumn(tableName, column);
+        } else if (action === 'DROP_COLUMN') {
+            return await this.executeDropColumn(tableName, columnName);
+        } else {
+            throw new Error(`Unsupported ALTER TABLE action: ${action}`);
+        }
+    }
+
+    /**
+     * ADD COLUMN を実行
+     */
+    async executeAddColumn(tableName, column) {
+        // テーブルの存在確認
+        const columns = await this.dbManager.getTableSchema(tableName);
+        if (!columns) {
+            throw new Error(`Table '${tableName}' does not exist`);
+        }
+
+        // カラム名の重複チェック
+        if (columns.some(col => col.name === column.name)) {
+            throw new Error(`Column '${column.name}' already exists in table '${tableName}'`);
+        }
+
+        // PRIMARY KEY制約のチェック（テーブルに既にPRIMARY KEYがある場合はエラー）
+        if (column.primaryKey) {
+            const hasPrimaryKey = columns.some(col => col.primaryKey);
+            if (hasPrimaryKey) {
+                throw new Error(`Table '${tableName}' already has a PRIMARY KEY`);
+            }
+        }
+
+        // NOT NULL制約とDEFAULT値のチェック
+        if (column.notNull && !column.defaultValue) {
+            // 既存の行がある場合、NOT NULL制約を持つカラムにはDEFAULT値が必要
+            const existingRows = await this.dbManager.getAll(tableName);
+            if (existingRows.length > 0) {
+                throw new Error(`Cannot add NOT NULL column '${column.name}' without DEFAULT value to non-empty table`);
+            }
+        }
+
+        // スキーマを更新
+        columns.push({
+            name: column.name,
+            type: column.type,
+            primaryKey: column.primaryKey || false,
+            notNull: column.notNull || false,
+            unique: column.unique || false,
+            defaultValue: column.defaultValue || null
+        });
+
+        // PRIMARY KEY情報を取得
+        const primaryKey = await this.dbManager.getTablePrimaryKey(tableName);
+
+        await this.dbManager.updateTableSchema(tableName, { columns, primaryKey });
+
+        // 既存の全行に新しいカラムを追加
+        const existingRows = await this.dbManager.getAll(tableName);
+        
+        for (const row of existingRows) {
+            let newValue = null;
+
+            // DEFAULT値がある場合は評価
+            if (column.defaultValue) {
+                newValue = this.evaluateDefaultValue(column.defaultValue);
+                // データ型の検証と変換
+                if (!validateDataType(newValue, column.type)) {
+                    throw new Error(`Invalid default value type for column '${column.name}': expected ${column.type}`);
+                }
+                newValue = convertToDataType(newValue, column.type);
+            }
+
+            // 新しいカラムを追加
+            row[column.name] = newValue;
+
+            // NOT NULL制約のチェック
+            if (column.notNull && newValue === null) {
+                throw new Error(`Column '${column.name}' cannot be NULL`);
+            }
+
+            // 行を更新
+            await this.dbManager.update(tableName, row);
+        }
+
+        // UNIQUE制約がある場合、既存の値の重複チェック
+        if (column.unique) {
+            const values = existingRows.map(row => row[column.name]);
+            const uniqueValues = new Set(values.filter(v => v !== null));
+            if (uniqueValues.size !== values.filter(v => v !== null).length) {
+                throw new Error(`UNIQUE constraint violation: duplicate values in column '${column.name}'`);
+            }
+        }
+
+        return {
+            type: 'ALTER_TABLE',
+            success: true,
+            message: `Column '${column.name}' added to table '${tableName}'`
+        };
+    }
+
+    /**
+     * DROP COLUMN を実行
+     */
+    async executeDropColumn(tableName, columnName) {
+        // テーブルの存在確認
+        const columns = await this.dbManager.getTableSchema(tableName);
+        if (!columns) {
+            throw new Error(`Table '${tableName}' does not exist`);
+        }
+
+        // カラムの存在確認
+        const columnIndex = columns.findIndex(col => col.name === columnName);
+        if (columnIndex === -1) {
+            throw new Error(`Column '${columnName}' does not exist in table '${tableName}'`);
+        }
+
+        // 最後のカラムの削除を禁止
+        if (columns.length === 1) {
+            throw new Error(`Cannot drop the last column '${columnName}' from table '${tableName}'`);
+        }
+
+        // PRIMARY KEYカラムの削除を禁止
+        const columnToDelete = columns[columnIndex];
+        if (columnToDelete.primaryKey) {
+            throw new Error(`Cannot drop PRIMARY KEY column '${columnName}'`);
+        }
+
+        // スキーマからカラムを削除
+        columns.splice(columnIndex, 1);
+
+        // PRIMARY KEY情報を取得
+        const primaryKey = await this.dbManager.getTablePrimaryKey(tableName);
+
+        await this.dbManager.updateTableSchema(tableName, { columns, primaryKey });
+
+        // 既存の全行からカラムを削除
+        const existingRows = await this.dbManager.getAll(tableName);
+        
+        for (const row of existingRows) {
+            delete row[columnName];
+            await this.dbManager.update(tableName, row);
+        }
+
+        return {
+            type: 'ALTER_TABLE',
+            success: true,
+            message: `Column '${columnName}' dropped from table '${tableName}'`
+        };
+    }
+
+    /**
+     * デフォルト値を評価
+     */
+    evaluateDefaultValue(defaultValue) {
+        if (!defaultValue) {
+            return null;
+        }
+
+        switch (defaultValue.type) {
+            case 'STRING':
+                return defaultValue.value;
+            
+            case 'NUMBER':
+                return defaultValue.value;
+            
+            case 'NULL':
+                return null;
+            
+            case 'FUNCTION':
+                // 特殊関数の評価
+                switch (defaultValue.value) {
+                    case 'CURRENT_TIMESTAMP':
+                        // ISO 8601形式の日時文字列を返す
+                        return new Date().toISOString();
+                    
+                    case 'CURRENT_DATE':
+                        // YYYY-MM-DD形式の日付文字列を返す
+                        const date = new Date();
+                        return date.toISOString().split('T')[0];
+                    
+                    case 'CURRENT_TIME':
+                        // HH:MM:SS形式の時刻文字列を返す
+                        const time = new Date();
+                        return time.toISOString().split('T')[1].split('.')[0];
+                    
+                    default:
+                        throw new Error(`Unknown default function: ${defaultValue.value}`);
+                }
+            
+            default:
+                throw new Error(`Unknown default value type: ${defaultValue.type}`);
+        }
     }
 }
 /**
@@ -2017,6 +2628,56 @@ class JSDB {
             return result;
         } catch (error) {
             throw new Error(`SQL execution failed: ${error.message}`);
+        }
+    }
+
+    /**
+     * データベース内の全テーブル名を取得
+     * @returns {Promise<Array<string>>} テーブル名の配列
+     */
+    async listTables() {
+        // 初期化されていない場合は初期化
+        if (!this.initialized) {
+            await this.initialize();
+        }
+
+        try {
+            return this.dbManager.getAllTableNames();
+        } catch (error) {
+            throw new Error(`Failed to list tables: ${error.message}`);
+        }
+    }
+
+    /**
+     * テーブルの詳細情報を取得
+     * @param {string} tableName - テーブル名
+     * @returns {Promise<Object>} テーブル情報（tableName, columns, primaryKey）
+     */
+    async describeTable(tableName) {
+        if (!tableName || typeof tableName !== 'string') {
+            throw new Error('Table name is required and must be a string');
+        }
+
+        // 初期化されていない場合は初期化
+        if (!this.initialized) {
+            await this.initialize();
+        }
+
+        try {
+            // テーブルが存在するかチェック
+            if (!this.dbManager.tableExists(tableName)) {
+                throw new Error(`Table '${tableName}' does not exist`);
+            }
+
+            const tableInfo = await this.dbManager.getTableInfo(tableName);
+            
+            if (!tableInfo) {
+                throw new Error(`Failed to get table information for '${tableName}'`);
+            }
+
+            return tableInfo;
+        } catch (error) {
+            throw new Error(`Failed to describe table: ${error.message}`);
         }
     }
 

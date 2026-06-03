@@ -20,6 +20,10 @@ class Executor {
         switch (statement.type) {
             case 'CREATE_TABLE':
                 return await this.executeCreateTable(statement);
+            case 'DROP_TABLE':
+                return await this.executeDropTable(statement);
+            case 'ALTER_TABLE':
+                return await this.executeAlterTable(statement);
             case 'INSERT':
                 return await this.executeInsert(statement);
             case 'SELECT':
@@ -152,6 +156,35 @@ class Executor {
     }
 
     /**
+     * DROP TABLE文を実行
+     */
+    async executeDropTable(statement) {
+        const { tableName, ifExists } = statement;
+
+        // テーブルが存在するかチェック
+        if (!this.dbManager.tableExists(tableName)) {
+            // IF EXISTS が指定されている場合はエラーを出さずに成功を返す
+            if (ifExists) {
+                return {
+                    type: 'DROP_TABLE',
+                    success: true,
+                    message: `Table '${tableName}' does not exist (skipped)`
+                };
+            }
+            throw new Error(`Table '${tableName}' does not exist`);
+        }
+
+        // テーブルを削除
+        await this.dbManager.dropTable(tableName);
+
+        return {
+            type: 'DROP_TABLE',
+            success: true,
+            message: `Table '${tableName}' dropped successfully`
+        };
+    }
+
+    /**
      * INSERT文を実行（バルクインサート対応）
      */
     async executeInsert(statement) {
@@ -201,6 +234,20 @@ class Executor {
                     }
                 }
 
+                // NOT NULL制約のチェック
+                if (columnSchema.notNull && (value === null || value === undefined)) {
+                    throw new Error(`NOT NULL constraint violation: column '${columnName}' cannot be NULL`);
+                }
+
+                // UNIQUE制約のチェック
+                if (columnSchema.unique && value !== null && value !== undefined) {
+                    const existingRows = await this.dbManager.getAll(tableName);
+                    const duplicate = existingRows.find(row => row[columnName] === value);
+                    if (duplicate) {
+                        throw new Error(`UNIQUE constraint violation: duplicate value '${value}' for column '${columnName}'`);
+                    }
+                }
+
                 // データ型の検証と変換
                 if (value !== null) {
                     if (!validateDataType(value, columnSchema.type)) {
@@ -214,6 +261,35 @@ class Executor {
                     }
                 } else {
                     data[columnName] = null;
+                }
+            }
+
+            // 指定されていないカラムにデフォルト値を適用
+            for (const columnSchema of schema) {
+                const columnName = columnSchema.name;
+                
+                // カラムが指定されていない場合
+                if (!columns.includes(columnName)) {
+                    if (columnSchema.defaultValue) {
+                        // デフォルト値を適用
+                        const defaultVal = this.evaluateDefaultValue(columnSchema.defaultValue);
+                        
+                        // データ型の検証と変換
+                        if (defaultVal !== null) {
+                            if (!validateDataType(defaultVal, columnSchema.type)) {
+                                throw new Error(`Invalid default value type for column '${columnName}': expected ${columnSchema.type}`);
+                            }
+                            data[columnName] = convertToDataType(defaultVal, columnSchema.type);
+                        } else {
+                            data[columnName] = null;
+                        }
+                    } else if (columnSchema.notNull) {
+                        // NOT NULL制約があるのにデフォルト値もない場合はエラー
+                        throw new Error(`NOT NULL constraint violation: column '${columnName}' requires a value`);
+                    } else {
+                        // デフォルト値がない場合はNULL
+                        data[columnName] = null;
+                    }
                 }
             }
 
@@ -552,6 +628,20 @@ class Executor {
                     }
                 }
 
+                // NOT NULL制約のチェック
+                if (columnSchema.notNull && (value === null || value === undefined)) {
+                    throw new Error(`NOT NULL constraint violation: column '${columnName}' cannot be NULL`);
+                }
+
+                // UNIQUE制約のチェック
+                if (columnSchema.unique && value !== null && value !== undefined) {
+                    // 重複チェック（自分自身以外）
+                    const duplicate = rows.find(r => r.__id__ !== row.__id__ && r[columnName] === value);
+                    if (duplicate) {
+                        throw new Error(`UNIQUE constraint violation: duplicate value '${value}' for column '${columnName}'`);
+                    }
+                }
+
                 // データ型の検証と変換
                 if (value !== null) {
                     if (!validateDataType(value, columnSchema.type)) {
@@ -612,5 +702,205 @@ class Executor {
             success: true,
             rowCount: deletedCount
         };
+    }
+
+    /**
+     * ALTER TABLE 文を実行
+     */
+    async executeAlterTable(ast) {
+        const { tableName, action, column, columnName } = ast;
+
+        if (action === 'ADD_COLUMN') {
+            return await this.executeAddColumn(tableName, column);
+        } else if (action === 'DROP_COLUMN') {
+            return await this.executeDropColumn(tableName, columnName);
+        } else {
+            throw new Error(`Unsupported ALTER TABLE action: ${action}`);
+        }
+    }
+
+    /**
+     * ADD COLUMN を実行
+     */
+    async executeAddColumn(tableName, column) {
+        // テーブルの存在確認
+        const columns = await this.dbManager.getTableSchema(tableName);
+        if (!columns) {
+            throw new Error(`Table '${tableName}' does not exist`);
+        }
+
+        // カラム名の重複チェック
+        if (columns.some(col => col.name === column.name)) {
+            throw new Error(`Column '${column.name}' already exists in table '${tableName}'`);
+        }
+
+        // PRIMARY KEY制約のチェック（テーブルに既にPRIMARY KEYがある場合はエラー）
+        if (column.primaryKey) {
+            const hasPrimaryKey = columns.some(col => col.primaryKey);
+            if (hasPrimaryKey) {
+                throw new Error(`Table '${tableName}' already has a PRIMARY KEY`);
+            }
+        }
+
+        // NOT NULL制約とDEFAULT値のチェック
+        if (column.notNull && !column.defaultValue) {
+            // 既存の行がある場合、NOT NULL制約を持つカラムにはDEFAULT値が必要
+            const existingRows = await this.dbManager.getAll(tableName);
+            if (existingRows.length > 0) {
+                throw new Error(`Cannot add NOT NULL column '${column.name}' without DEFAULT value to non-empty table`);
+            }
+        }
+
+        // スキーマを更新
+        columns.push({
+            name: column.name,
+            type: column.type,
+            primaryKey: column.primaryKey || false,
+            notNull: column.notNull || false,
+            unique: column.unique || false,
+            defaultValue: column.defaultValue || null
+        });
+
+        // PRIMARY KEY情報を取得
+        const primaryKey = await this.dbManager.getTablePrimaryKey(tableName);
+
+        await this.dbManager.updateTableSchema(tableName, { columns, primaryKey });
+
+        // 既存の全行に新しいカラムを追加
+        const existingRows = await this.dbManager.getAll(tableName);
+        
+        for (const row of existingRows) {
+            let newValue = null;
+
+            // DEFAULT値がある場合は評価
+            if (column.defaultValue) {
+                newValue = this.evaluateDefaultValue(column.defaultValue);
+                // データ型の検証と変換
+                if (!validateDataType(newValue, column.type)) {
+                    throw new Error(`Invalid default value type for column '${column.name}': expected ${column.type}`);
+                }
+                newValue = convertToDataType(newValue, column.type);
+            }
+
+            // 新しいカラムを追加
+            row[column.name] = newValue;
+
+            // NOT NULL制約のチェック
+            if (column.notNull && newValue === null) {
+                throw new Error(`Column '${column.name}' cannot be NULL`);
+            }
+
+            // 行を更新
+            await this.dbManager.update(tableName, row);
+        }
+
+        // UNIQUE制約がある場合、既存の値の重複チェック
+        if (column.unique) {
+            const values = existingRows.map(row => row[column.name]);
+            const uniqueValues = new Set(values.filter(v => v !== null));
+            if (uniqueValues.size !== values.filter(v => v !== null).length) {
+                throw new Error(`UNIQUE constraint violation: duplicate values in column '${column.name}'`);
+            }
+        }
+
+        return {
+            type: 'ALTER_TABLE',
+            success: true,
+            message: `Column '${column.name}' added to table '${tableName}'`
+        };
+    }
+
+    /**
+     * DROP COLUMN を実行
+     */
+    async executeDropColumn(tableName, columnName) {
+        // テーブルの存在確認
+        const columns = await this.dbManager.getTableSchema(tableName);
+        if (!columns) {
+            throw new Error(`Table '${tableName}' does not exist`);
+        }
+
+        // カラムの存在確認
+        const columnIndex = columns.findIndex(col => col.name === columnName);
+        if (columnIndex === -1) {
+            throw new Error(`Column '${columnName}' does not exist in table '${tableName}'`);
+        }
+
+        // 最後のカラムの削除を禁止
+        if (columns.length === 1) {
+            throw new Error(`Cannot drop the last column '${columnName}' from table '${tableName}'`);
+        }
+
+        // PRIMARY KEYカラムの削除を禁止
+        const columnToDelete = columns[columnIndex];
+        if (columnToDelete.primaryKey) {
+            throw new Error(`Cannot drop PRIMARY KEY column '${columnName}'`);
+        }
+
+        // スキーマからカラムを削除
+        columns.splice(columnIndex, 1);
+
+        // PRIMARY KEY情報を取得
+        const primaryKey = await this.dbManager.getTablePrimaryKey(tableName);
+
+        await this.dbManager.updateTableSchema(tableName, { columns, primaryKey });
+
+        // 既存の全行からカラムを削除
+        const existingRows = await this.dbManager.getAll(tableName);
+        
+        for (const row of existingRows) {
+            delete row[columnName];
+            await this.dbManager.update(tableName, row);
+        }
+
+        return {
+            type: 'ALTER_TABLE',
+            success: true,
+            message: `Column '${columnName}' dropped from table '${tableName}'`
+        };
+    }
+
+    /**
+     * デフォルト値を評価
+     */
+    evaluateDefaultValue(defaultValue) {
+        if (!defaultValue) {
+            return null;
+        }
+
+        switch (defaultValue.type) {
+            case 'STRING':
+                return defaultValue.value;
+            
+            case 'NUMBER':
+                return defaultValue.value;
+            
+            case 'NULL':
+                return null;
+            
+            case 'FUNCTION':
+                // 特殊関数の評価
+                switch (defaultValue.value) {
+                    case 'CURRENT_TIMESTAMP':
+                        // ISO 8601形式の日時文字列を返す
+                        return new Date().toISOString();
+                    
+                    case 'CURRENT_DATE':
+                        // YYYY-MM-DD形式の日付文字列を返す
+                        const date = new Date();
+                        return date.toISOString().split('T')[0];
+                    
+                    case 'CURRENT_TIME':
+                        // HH:MM:SS形式の時刻文字列を返す
+                        const time = new Date();
+                        return time.toISOString().split('T')[1].split('.')[0];
+                    
+                    default:
+                        throw new Error(`Unknown default function: ${defaultValue.value}`);
+                }
+            
+            default:
+                throw new Error(`Unknown default value type: ${defaultValue.type}`);
+        }
     }
 }

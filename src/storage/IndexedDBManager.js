@@ -104,6 +104,41 @@ class IndexedDBManager {
     }
 
     /**
+     * テーブルを削除
+     */
+    async dropTable(tableName) {
+        // バージョンを上げて再オープン
+        this.version++;
+        this.db.close();
+
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(this.dbName, this.version);
+
+            request.onerror = () => {
+                reject(new Error(`Failed to drop table: ${request.error}`));
+            };
+
+            request.onsuccess = () => {
+                this.db = request.result;
+                
+                // メタデータからスキーマ情報を削除
+                this.deleteTableSchema(tableName).then(() => {
+                    resolve();
+                }).catch(reject);
+            };
+
+            request.onupgradeneeded = (event) => {
+                const db = event.target.result;
+
+                // テーブルストアを削除
+                if (db.objectStoreNames.contains(tableName)) {
+                    db.deleteObjectStore(tableName);
+                }
+            };
+        });
+    }
+
+    /**
      * テーブルのスキーマ情報を保存
      */
     async saveTableSchema(tableName, columns, primaryKey = null) {
@@ -120,6 +155,21 @@ class IndexedDBManager {
 
             request.onsuccess = () => resolve();
             request.onerror = () => reject(new Error(`Failed to save schema: ${request.error}`));
+        });
+    }
+
+    /**
+     * テーブルのスキーマ情報を削除
+     */
+    async deleteTableSchema(tableName) {
+        const transaction = this.db.transaction(['__metadata__'], 'readwrite');
+        const store = transaction.objectStore('__metadata__');
+
+        return new Promise((resolve, reject) => {
+            const request = store.delete(`schema_${tableName}`);
+
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(new Error(`Failed to delete schema: ${request.error}`));
         });
     }
 
@@ -163,10 +213,70 @@ class IndexedDBManager {
     }
 
     /**
+     * テーブルのスキーマ情報を更新
+     */
+    async updateTableSchema(tableName, schema) {
+        const transaction = this.db.transaction(['__metadata__'], 'readwrite');
+        const store = transaction.objectStore('__metadata__');
+
+        return new Promise((resolve, reject) => {
+            const request = store.put({
+                key: `schema_${tableName}`,
+                tableName: tableName,
+                columns: schema.columns,
+                primaryKey: schema.primaryKey || null
+            });
+
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(new Error(`Failed to update schema: ${request.error}`));
+        });
+    }
+
+    /**
      * テーブルが存在するかチェック
      */
     tableExists(tableName) {
         return this.db.objectStoreNames.contains(tableName);
+    }
+
+    /**
+     * 全テーブル名の一覧を取得
+     */
+    getAllTableNames() {
+        const tableNames = [];
+        for (let i = 0; i < this.db.objectStoreNames.length; i++) {
+            const name = this.db.objectStoreNames[i];
+            // __metadata__ は除外
+            if (name !== '__metadata__') {
+                tableNames.push(name);
+            }
+        }
+        return tableNames;
+    }
+
+    /**
+     * テーブルの詳細情報を取得（スキーマとPRIMARY KEY情報を含む）
+     */
+    async getTableInfo(tableName) {
+        const transaction = this.db.transaction(['__metadata__'], 'readonly');
+        const store = transaction.objectStore('__metadata__');
+
+        return new Promise((resolve, reject) => {
+            const request = store.get(`schema_${tableName}`);
+
+            request.onsuccess = () => {
+                if (request.result) {
+                    resolve({
+                        tableName: request.result.tableName,
+                        columns: request.result.columns,
+                        primaryKey: request.result.primaryKey
+                    });
+                } else {
+                    resolve(null);
+                }
+            };
+            request.onerror = () => reject(new Error(`Failed to get table info: ${request.error}`));
+        });
     }
 
     /**

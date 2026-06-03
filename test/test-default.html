@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JSDB - DEFAULT制約テスト</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        .test-section {
+            background: white;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .test-section h2 {
+            color: #4CAF50;
+            margin-top: 0;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            margin: 5px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .output {
+            background-color: #f9f9f9;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 15px;
+            margin-top: 10px;
+            white-space: pre-wrap;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .success {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+        .error {
+            color: #f44336;
+            font-weight: bold;
+        }
+        .info {
+            color: #2196F3;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #4CAF50;
+            color: white;
+        }
+        tr:nth-child(even) {
+            background-color: #f2f2f2;
+        }
+    </style>
+</head>
+<body>
+    <h1>⚙️ JSDB - DEFAULT制約テスト</h1>
+    
+    <div class="test-section">
+        <h2>テスト1: リテラル値のデフォルト</h2>
+        <button onclick="test1()">テスト実行</button>
+        <div id="output1" class="output"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>テスト2: CURRENT_TIMESTAMP のデフォルト</h2>
+        <button onclick="test2()">テスト実行</button>
+        <div id="output2" class="output"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>テスト3: CURRENT_DATE と CURRENT_TIME</h2>
+        <button onclick="test3()">テスト実行</button>
+        <div id="output3" class="output"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>テスト4: 複数カラムのデフォルト値</h2>
+        <button onclick="test4()">テスト実行</button>
+        <div id="output4" class="output"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>テスト5: デフォルト値と明示的な値の混在</h2>
+        <button onclick="test5()">テスト実行</button>
+        <div id="output5" class="output"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>テスト6: DEFAULT + NOT NULL制約</h2>
+        <button onclick="test6()">テスト実行</button>
+        <div id="output6" class="output"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>テスト7: DEFAULT NULL</h2>
+        <button onclick="test7()">テスト実行</button>
+        <div id="output7" class="output"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>全テスト実行</h2>
+        <button onclick="runAllTests()">全テスト実行</button>
+        <div id="outputAll" class="output"></div>
+    </div>
+
+    <script src="../jsdb.js"></script>
+    <script>
+        let db;
+
+        function log(elementId, message, type = 'info') {
+            const output = document.getElementById(elementId);
+            const span = document.createElement('span');
+            span.className = type;
+            span.textContent = message + '\n';
+            output.appendChild(span);
+        }
+
+        function clearLog(elementId) {
+            document.getElementById(elementId).innerHTML = '';
+        }
+
+        function displayTable(elementId, rows) {
+            const output = document.getElementById(elementId);
+            if (rows.length === 0) {
+                log(elementId, '(データなし)', 'info');
+                return;
+            }
+
+            const table = document.createElement('table');
+            const thead = document.createElement('thead');
+            const tbody = document.createElement('tbody');
+
+            // ヘッダー行
+            const headerRow = document.createElement('tr');
+            const keys = Object.keys(rows[0]).filter(k => k !== '__id__');
+            keys.forEach(key => {
+                const th = document.createElement('th');
+                th.textContent = key;
+                headerRow.appendChild(th);
+            });
+            thead.appendChild(headerRow);
+
+            // データ行
+            rows.forEach(row => {
+                const tr = document.createElement('tr');
+                keys.forEach(key => {
+                    const td = document.createElement('td');
+                    td.textContent = row[key] === null ? 'NULL' : row[key];
+                    tr.appendChild(td);
+                });
+                tbody.appendChild(tr);
+            });
+
+            table.appendChild(thead);
+            table.appendChild(tbody);
+            output.appendChild(table);
+        }
+
+        async function test1() {
+            clearLog('output1');
+            try {
+                log('output1', '=== テスト1: リテラル値のデフォルト ===', 'info');
+                
+                db = new JSDB('test_default_db');
+                await db.execute('DROP TABLE IF EXISTS users');
+                
+                log('output1', '\n1. テーブル作成（デフォルト値付き）');
+                await db.execute(`
+                    CREATE TABLE users (
+                        id INTEGER PRIMARY KEY,
+                        name TEXT,
+                        status TEXT DEFAULT 'active',
+                        score INTEGER DEFAULT 0,
+                        note TEXT DEFAULT NULL
+                    )
+                `);
+                log('output1', '✓ テーブル作成成功', 'success');
+
+                log('output1', '\n2. スキーマ確認');
+                const schema = await db.describeTable('users');
+                log('output1', JSON.stringify(schema, null, 2), 'info');
+
+                log('output1', '\n3. データ挿入（デフォルト値を使用）');
+                await db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice')");
+                log('output1', '✓ データ挿入成功', 'success');
+
+                log('output1', '\n4. データ確認');
+                const result = await db.execute('SELECT * FROM users');
+                displayTable('output1', result.rows);
+                log('output1', '\n期待値: status="active", score=0, note=NULL', 'info');
+
+                log('output1', '\n✅ テスト1完了', 'success');
+            } catch (error) {
+                log('output1', `❌ エラー: ${error.message}`, 'error');
+            }
+        }
+
+        async function test2() {
+            clearLog('output2');
+            try {
+                log('output2', '=== テスト2: CURRENT_TIMESTAMP のデフォルト ===', 'info');
+                
+                db = new JSDB('test_default_db');
+                await db.execute('DROP TABLE IF EXISTS logs');
+                
+                log('output2', '\n1. テーブル作成（CURRENT_TIMESTAMP）');
+                await db.execute(`
+                    CREATE TABLE logs (
+                        id INTEGER PRIMARY KEY,
+                        message TEXT,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                `);
+                log('output2', '✓ テーブル作成成功', 'success');
+
+                log('output2', '\n2. データ挿入（created_atを省略）');
+                await db.execute("INSERT INTO logs (id, message) VALUES (1, 'Log entry 1')");
+                await new Promise(resolve => setTimeout(resolve, 100)); // 少し待つ
+                await db.execute("INSERT INTO logs (id, message) VALUES (2, 'Log entry 2')");
+                log('output2', '✓ データ挿入成功', 'success');
+
+                log('output2', '\n3. データ確認');
+                const result = await db.execute('SELECT * FROM logs');
+                displayTable('output2', result.rows);
+                log('output2', '\n期待値: created_atに現在のタイムスタンプが設定される', 'info');
+
+                log('output2', '\n✅ テスト2完了', 'success');
+            } catch (error) {
+                log('output2', `❌ エラー: ${error.message}`, 'error');
+            }
+        }
+
+        async function test3() {
+            clearLog('output3');
+            try {
+                log('output3', '=== テスト3: CURRENT_DATE と CURRENT_TIME ===', 'info');
+                
+                db = new JSDB('test_default_db');
+                await db.execute('DROP TABLE IF EXISTS events');
+                
+                log('output3', '\n1. テーブル作成');
+                await db.execute(`
+                    CREATE TABLE events (
+                        id INTEGER PRIMARY KEY,
+                        name TEXT,
+                        event_date DATE DEFAULT CURRENT_DATE,
+                        event_time TEXT DEFAULT CURRENT_TIME
+                    )
+                `);
+                log('output3', '✓ テーブル作成成功', 'success');
+
+                log('output3', '\n2. データ挿入');
+                await db.execute("INSERT INTO events (id, name) VALUES (1, 'Meeting')");
+                log('output3', '✓ データ挿入成功', 'success');
+
+                log('output3', '\n3. データ確認');
+                const result = await db.execute('SELECT * FROM events');
+                displayTable('output3', result.rows);
+                log('output3', '\n期待値: event_date=YYYY-MM-DD, event_time=HH:MM:SS', 'info');
+
+                log('output3', '\n✅ テスト3完了', 'success');
+            } catch (error) {
+                log('output3', `❌ エラー: ${error.message}`, 'error');
+            }
+        }
+
+        async function test4() {
+            clearLog('output4');
+            try {
+                log('output4', '=== テスト4: 複数カラムのデフォルト値 ===', 'info');
+                
+                db = new JSDB('test_default_db');
+                await db.execute('DROP TABLE IF EXISTS products');
+                
+                log('output4', '\n1. テーブル作成');
+                await db.execute(`
+                    CREATE TABLE products (
+                        id INTEGER PRIMARY KEY,
+                        name TEXT,
+                        price REAL DEFAULT 0.0,
+                        stock INTEGER DEFAULT 0,
+                        available INTEGER DEFAULT 1,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                `);
+                log('output4', '✓ テーブル作成成功', 'success');
+
+                log('output4', '\n2. データ挿入（一部のカラムのみ指定）');
+                await db.execute("INSERT INTO products (id, name, price) VALUES (1, 'Product A', 99.99)");
+                await db.execute("INSERT INTO products (id, name) VALUES (2, 'Product B')");
+                log('output4', '✓ データ挿入成功', 'success');
+
+                log('output4', '\n3. データ確認');
+                const result = await db.execute('SELECT * FROM products');
+                displayTable('output4', result.rows);
+
+                log('output4', '\n✅ テスト4完了', 'success');
+            } catch (error) {
+                log('output4', `❌ エラー: ${error.message}`, 'error');
+            }
+        }
+
+        async function test5() {
+            clearLog('output5');
+            try {
+                log('output5', '=== テスト5: デフォルト値と明示的な値の混在 ===', 'info');
+                
+                db = new JSDB('test_default_db');
+                await db.execute('DROP TABLE IF EXISTS settings');
+                
+                log('output5', '\n1. テーブル作成');
+                await db.execute(`
+                    CREATE TABLE settings (
+                        id INTEGER PRIMARY KEY,
+                        setting_key TEXT,
+                        setting_value TEXT DEFAULT 'default_value',
+                        enabled INTEGER DEFAULT 1
+                    )
+                `);
+                log('output5', '✓ テーブル作成成功', 'success');
+
+                log('output5', '\n2. データ挿入（デフォルト値使用）');
+                await db.execute("INSERT INTO settings (id, setting_key) VALUES (1, 'setting1')");
+                log('output5', '✓ データ挿入成功', 'success');
+
+                log('output5', '\n3. データ挿入（明示的な値を指定）');
+                await db.execute("INSERT INTO settings (id, setting_key, setting_value, enabled) VALUES (2, 'setting2', 'custom_value', 0)");
+                log('output5', '✓ データ挿入成功', 'success');
+
+                log('output5', '\n4. データ確認');
+                const result = await db.execute('SELECT * FROM settings');
+                displayTable('output5', result.rows);
+
+                log('output5', '\n✅ テスト5完了', 'success');
+            } catch (error) {
+                log('output5', `❌ エラー: ${error.message}`, 'error');
+            }
+        }
+
+        async function test6() {
+            clearLog('output6');
+            try {
+                log('output6', '=== テスト6: DEFAULT + NOT NULL制約 ===', 'info');
+                
+                db = new JSDB('test_default_db');
+                await db.execute('DROP TABLE IF EXISTS accounts');
+                
+                log('output6', '\n1. テーブル作成');
+                await db.execute(`
+                    CREATE TABLE accounts (
+                        id INTEGER PRIMARY KEY,
+                        username TEXT NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'pending',
+                        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                `);
+                log('output6', '✓ テーブル作成成功', 'success');
+
+                log('output6', '\n2. データ挿入（statusとcreated_atを省略）');
+                await db.execute("INSERT INTO accounts (id, username) VALUES (1, 'user1')");
+                log('output6', '✓ データ挿入成功（デフォルト値が適用される）', 'success');
+
+                log('output6', '\n3. データ確認');
+                const result = await db.execute('SELECT * FROM accounts');
+                displayTable('output6', result.rows);
+
+                log('output6', '\n4. NOT NULL制約違反テスト');
+                try {
+                    await db.execute("INSERT INTO accounts (id, status) VALUES (2, 'active')");
+                    log('output6', '❌ エラーが発生すべきでした', 'error');
+                } catch (error) {
+                    log('output6', `✓ 期待通りエラー発生: ${error.message}`, 'success');
+                }
+
+                log('output6', '\n✅ テスト6完了', 'success');
+            } catch (error) {
+                log('output6', `❌ エラー: ${error.message}`, 'error');
+            }
+        }
+
+        async function test7() {
+            clearLog('output7');
+            try {
+                log('output7', '=== テスト7: DEFAULT NULL ===', 'info');
+                
+                db = new JSDB('test_default_db');
+                await db.execute('DROP TABLE IF EXISTS items');
+                
+                log('output7', '\n1. テーブル作成（DEFAULT NULL）');
+                await db.execute(`
+                    CREATE TABLE items (
+                        id INTEGER PRIMARY KEY,
+                        name TEXT,
+                        description TEXT DEFAULT NULL,
+                        category TEXT DEFAULT NULL
+                    )
+                `);
+                log('output7', '✓ テーブル作成成功', 'success');
+
+                log('output7', '\n2. データ挿入');
+                await db.execute("INSERT INTO items (id, name) VALUES (1, 'Item 1')");
+                log('output7', '✓ データ挿入成功', 'success');
+
+                log('output7', '\n3. データ確認');
+                const result = await db.execute('SELECT * FROM items');
+                displayTable('output7', result.rows);
+                log('output7', '\n期待値: description=NULL, category=NULL', 'info');
+
+                log('output7', '\n✅ テスト7完了', 'success');
+            } catch (error) {
+                log('output7', `❌ エラー: ${error.message}`, 'error');
+            }
+        }
+
+        async function runAllTests() {
+            clearLog('outputAll');
+            log('outputAll', '=== 全テスト実行開始 ===\n', 'info');
+            
+            const tests = [
+                { name: 'テスト1', func: test1 },
+                { name: 'テスト2', func: test2 },
+                { name: 'テスト3', func: test3 },
+                { name: 'テスト4', func: test4 },
+                { name: 'テスト5', func: test5 },
+                { name: 'テスト6', func: test6 },
+                { name: 'テスト7', func: test7 }
+            ];
+
+            for (const test of tests) {
+                try {
+                    await test.func();
+                    log('outputAll', `✓ ${test.name} 完了`, 'success');
+                } catch (error) {
+                    log('outputAll', `✗ ${test.name} 失敗: ${error.message}`, 'error');
+                }
+            }
+
+            log('outputAll', '\n=== 全テスト完了 ===', 'info');
+        }
+
+        // ページ読み込み時の初期化
+        window.addEventListener('load', () => {
+            console.log('JSDB DEFAULT制約テストページ読み込み完了');
+        });
+    </script>
+</body>
+</html>

@@ -55,6 +55,10 @@ class Parser {
         switch (firstToken.value) {
             case 'CREATE':
                 return this.parseCreate();
+            case 'DROP':
+                return this.parseDrop();
+            case 'ALTER':
+                return this.parseAlter();
             case 'INSERT':
                 return this.parseInsert();
             case 'SELECT':
@@ -98,15 +102,60 @@ class Parser {
             const column = {
                 name: columnName,
                 type: columnType,
-                primaryKey: false
+                primaryKey: false,
+                notNull: false,
+                unique: false,
+                defaultValue: null
             };
             
-            // PRIMARY KEY 制約のチェック
-            if (this.current() && this.current().type === 'KEYWORD' && this.current().value === 'PRIMARY') {
-                this.advance();
-                this.expect('KEYWORD', 'KEY');
-                column.primaryKey = true;
-                primaryKey = columnName;
+            // 制約のチェック（PRIMARY KEY, NOT NULL, UNIQUE, DEFAULT）
+            while (this.current() && this.current().type === 'KEYWORD') {
+                const keyword = this.current().value;
+                
+                if (keyword === 'PRIMARY') {
+                    this.advance();
+                    this.expect('KEYWORD', 'KEY');
+                    column.primaryKey = true;
+                    primaryKey = columnName;
+                } else if (keyword === 'NOT') {
+                    this.advance();
+                    this.expect('KEYWORD', 'NULL');
+                    column.notNull = true;
+                } else if (keyword === 'UNIQUE') {
+                    this.advance();
+                    column.unique = true;
+                } else if (keyword === 'DEFAULT') {
+                    this.advance();
+                    // DEFAULT値の解析
+                    const token = this.current();
+                    if (token.type === 'STRING') {
+                        column.defaultValue = { type: 'STRING', value: token.value };
+                        this.advance();
+                    } else if (token.type === 'NUMBER') {
+                        column.defaultValue = { type: 'NUMBER', value: token.value };
+                        this.advance();
+                    } else if (token.type === 'KEYWORD') {
+                        if (token.value === 'NULL') {
+                            column.defaultValue = { type: 'NULL', value: null };
+                            this.advance();
+                        } else if (token.value === 'CURRENT_TIMESTAMP') {
+                            column.defaultValue = { type: 'FUNCTION', value: 'CURRENT_TIMESTAMP' };
+                            this.advance();
+                        } else if (token.value === 'CURRENT_DATE') {
+                            column.defaultValue = { type: 'FUNCTION', value: 'CURRENT_DATE' };
+                            this.advance();
+                        } else if (token.value === 'CURRENT_TIME') {
+                            column.defaultValue = { type: 'FUNCTION', value: 'CURRENT_TIME' };
+                            this.advance();
+                        } else {
+                            throw new Error(`Unexpected DEFAULT value: ${token.value}`);
+                        }
+                    } else {
+                        throw new Error(`Unexpected DEFAULT value type: ${token.type}`);
+                    }
+                } else {
+                    break;
+                }
             }
             
             columns.push(column);
@@ -416,6 +465,31 @@ class Parser {
     }
 
     /**
+     * DROP TABLE文をパース
+     * DROP TABLE [IF EXISTS] table_name
+     */
+    parseDrop() {
+        this.expect('KEYWORD', 'DROP');
+        this.expect('KEYWORD', 'TABLE');
+        
+        // IF EXISTS のチェック
+        let ifExists = false;
+        if (this.current() && this.current().type === 'KEYWORD' && this.current().value === 'IF') {
+            this.advance(); // IF
+            this.expect('KEYWORD', 'EXISTS');
+            ifExists = true;
+        }
+        
+        const tableName = this.expect('IDENTIFIER').value;
+        
+        return {
+            type: 'DROP_TABLE',
+            tableName: tableName,
+            ifExists: ifExists
+        };
+    }
+
+    /**
      * ORDER BY句をパース
      */
     parseOrderBy() {
@@ -653,5 +727,113 @@ class Parser {
             operator: operator,
             right: value
         };
+    }
+
+    /**
+     * ALTER TABLE文をパース
+     */
+    parseAlter() {
+        this.expect('KEYWORD', 'ALTER');
+        this.expect('KEYWORD', 'TABLE');
+        
+        const tableName = this.expect('IDENTIFIER').value;
+        
+        // ADD または DROP をチェック
+        const actionToken = this.expect('KEYWORD');
+        const action = actionToken.value;
+        
+        if (action === 'ADD') {
+            // COLUMN キーワードはオプション
+            if (this.current() && this.current().type === 'KEYWORD' && this.current().value === 'COLUMN') {
+                this.advance();
+            }
+            
+            // カラム定義の解析（CREATE TABLEと同じロジック）
+            const columnName = this.expect('IDENTIFIER').value;
+            const columnType = this.expect('KEYWORD').value;
+            
+            const column = {
+                name: columnName,
+                type: columnType,
+                primaryKey: false,
+                notNull: false,
+                unique: false,
+                defaultValue: null
+            };
+            
+            // 制約のチェック（PRIMARY KEY, NOT NULL, UNIQUE, DEFAULT）
+            while (this.current() && this.current().type === 'KEYWORD') {
+                const keyword = this.current().value;
+                
+                if (keyword === 'PRIMARY') {
+                    this.advance();
+                    this.expect('KEYWORD', 'KEY');
+                    column.primaryKey = true;
+                } else if (keyword === 'NOT') {
+                    this.advance();
+                    this.expect('KEYWORD', 'NULL');
+                    column.notNull = true;
+                } else if (keyword === 'UNIQUE') {
+                    this.advance();
+                    column.unique = true;
+                } else if (keyword === 'DEFAULT') {
+                    this.advance();
+                    // DEFAULT値の解析
+                    const token = this.current();
+                    if (token.type === 'STRING') {
+                        column.defaultValue = { type: 'STRING', value: token.value };
+                        this.advance();
+                    } else if (token.type === 'NUMBER') {
+                        column.defaultValue = { type: 'NUMBER', value: token.value };
+                        this.advance();
+                    } else if (token.type === 'KEYWORD') {
+                        if (token.value === 'NULL') {
+                            column.defaultValue = { type: 'NULL', value: null };
+                            this.advance();
+                        } else if (token.value === 'CURRENT_TIMESTAMP') {
+                            column.defaultValue = { type: 'FUNCTION', value: 'CURRENT_TIMESTAMP' };
+                            this.advance();
+                        } else if (token.value === 'CURRENT_DATE') {
+                            column.defaultValue = { type: 'FUNCTION', value: 'CURRENT_DATE' };
+                            this.advance();
+                        } else if (token.value === 'CURRENT_TIME') {
+                            column.defaultValue = { type: 'FUNCTION', value: 'CURRENT_TIME' };
+                            this.advance();
+                        } else {
+                            throw new Error(`Unexpected DEFAULT value: ${token.value}`);
+                        }
+                    } else {
+                        throw new Error(`Unexpected DEFAULT value type: ${token.type}`);
+                    }
+                } else {
+                    break;
+                }
+            }
+            
+            return {
+                type: 'ALTER_TABLE',
+                action: 'ADD_COLUMN',
+                tableName: tableName,
+                column: column
+            };
+            
+        } else if (action === 'DROP') {
+            // COLUMN キーワードはオプション
+            if (this.current() && this.current().type === 'KEYWORD' && this.current().value === 'COLUMN') {
+                this.advance();
+            }
+            
+            const columnName = this.expect('IDENTIFIER').value;
+            
+            return {
+                type: 'ALTER_TABLE',
+                action: 'DROP_COLUMN',
+                tableName: tableName,
+                columnName: columnName
+            };
+            
+        } else {
+            throw new Error(`Unsupported ALTER TABLE action: ${action}`);
+        }
     }
 }

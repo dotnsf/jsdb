@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JSDB NOT NULL Constraint Test</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        .test-section {
+            background: white;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .test-result {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        pre {
+            background-color: #f4f4f4;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔒 JSDB NOT NULL制約テスト</h1>
+
+    <div class="test-section">
+        <h2>テスト概要</h2>
+        <p>NOT NULL制約が正しく動作することを確認します。</p>
+        <ul>
+            <li>CREATE TABLE文でNOT NULL制約を定義</li>
+            <li>INSERT時のNOT NULL制約違反を検出</li>
+            <li>UPDATE時のNOT NULL制約違反を検出</li>
+            <li>NULL値が許可されるカラムは正常に動作</li>
+        </ul>
+    </div>
+
+    <div class="test-section">
+        <h2>テスト実行</h2>
+        <button onclick="runAllTests()">全テスト実行</button>
+        <button onclick="clearResults()">結果クリア</button>
+        <div id="results"></div>
+    </div>
+
+    <script src="../jsdb.js"></script>
+    <script>
+        let db;
+        const resultsDiv = document.getElementById('results');
+
+        function addResult(message, isSuccess = true) {
+            const div = document.createElement('div');
+            div.className = `test-result ${isSuccess ? 'success' : 'error'}`;
+            div.textContent = message;
+            resultsDiv.appendChild(div);
+        }
+
+        function clearResults() {
+            resultsDiv.innerHTML = '';
+        }
+
+        async function runAllTests() {
+            clearResults();
+            
+            try {
+                addResult('📝 テスト開始: NOT NULL制約');
+                
+                // 既存のデータベースを削除
+                await JSDB.deleteDatabase('notnull_test_db');
+                
+                db = new JSDB('notnull_test_db');
+                await db.initialize();
+                addResult('✅ データベース初期化成功');
+
+                // テスト1: NOT NULL制約付きテーブルの作成
+                await test1_CreateTableWithNotNull();
+                
+                // テスト2: NOT NULL制約違反（INSERT）
+                await test2_InsertNullViolation();
+                
+                // テスト3: NOT NULL制約を満たすINSERT
+                await test3_InsertValidData();
+                
+                // テスト4: NOT NULL制約違反（UPDATE）
+                await test4_UpdateNullViolation();
+                
+                // テスト5: NULL許可カラムへのNULL挿入
+                await test5_NullableColumn();
+                
+                // テスト6: 複数のNOT NULL制約
+                await test6_MultipleNotNullConstraints();
+                
+                addResult('🎉 全テスト完了！', true);
+                
+            } catch (error) {
+                addResult(`❌ エラー: ${error.message}`, false);
+                console.error(error);
+            }
+        }
+
+        async function test1_CreateTableWithNotNull() {
+            addResult('--- テスト1: NOT NULL制約付きテーブルの作成 ---');
+            
+            try {
+                await db.execute(`
+                    CREATE TABLE users (
+                        id INTEGER PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        email TEXT NOT NULL,
+                        age INTEGER
+                    )
+                `);
+                addResult('✅ NOT NULL制約付きテーブル作成成功');
+                
+                // テーブル情報を確認
+                const tableInfo = await db.describeTable('users');
+                const nameColumn = tableInfo.columns.find(col => col.name === 'name');
+                const emailColumn = tableInfo.columns.find(col => col.name === 'email');
+                const ageColumn = tableInfo.columns.find(col => col.name === 'age');
+                
+                if (nameColumn.notNull && emailColumn.notNull && !ageColumn.notNull) {
+                    addResult('✅ NOT NULL制約がスキーマに正しく保存されている');
+                } else {
+                    addResult('❌ NOT NULL制約がスキーマに正しく保存されていない', false);
+                }
+                
+            } catch (error) {
+                addResult(`❌ テスト1失敗: ${error.message}`, false);
+            }
+        }
+
+        async function test2_InsertNullViolation() {
+            addResult('--- テスト2: NOT NULL制約違反（INSERT） ---');
+            
+            try {
+                // nameにNULLを挿入しようとする
+                await db.execute(`
+                    INSERT INTO users (id, name, email, age)
+                    VALUES (1, NULL, 'test@example.com', 25)
+                `);
+                addResult('❌ NOT NULL制約違反が検出されなかった', false);
+            } catch (error) {
+                if (error.message.includes('NOT NULL constraint violation')) {
+                    addResult('✅ NOT NULL制約違反が正しく検出された');
+                } else {
+                    addResult(`❌ 予期しないエラー: ${error.message}`, false);
+                }
+            }
+            
+            try {
+                // emailにNULLを挿入しようとする
+                await db.execute(`
+                    INSERT INTO users (id, name, email, age)
+                    VALUES (2, 'John', NULL, 30)
+                `);
+                addResult('❌ NOT NULL制約違反が検出されなかった', false);
+            } catch (error) {
+                if (error.message.includes('NOT NULL constraint violation')) {
+                    addResult('✅ NOT NULL制約違反が正しく検出された（email）');
+                } else {
+                    addResult(`❌ 予期しないエラー: ${error.message}`, false);
+                }
+            }
+        }
+
+        async function test3_InsertValidData() {
+            addResult('--- テスト3: NOT NULL制約を満たすINSERT ---');
+            
+            try {
+                await db.execute(`
+                    INSERT INTO users (id, name, email, age)
+                    VALUES (1, 'Alice', 'alice@example.com', 25)
+                `);
+                addResult('✅ 有効なデータの挿入成功');
+                
+                await db.execute(`
+                    INSERT INTO users (id, name, email, age)
+                    VALUES (2, 'Bob', 'bob@example.com', NULL)
+                `);
+                addResult('✅ NULL許可カラム（age）にNULLを挿入成功');
+                
+                const result = await db.execute('SELECT * FROM users');
+                if (result.rows.length === 2) {
+                    addResult('✅ データが正しく挿入されている');
+                } else {
+                    addResult('❌ データが正しく挿入されていない', false);
+                }
+                
+            } catch (error) {
+                addResult(`❌ テスト3失敗: ${error.message}`, false);
+            }
+        }
+
+        async function test4_UpdateNullViolation() {
+            addResult('--- テスト4: NOT NULL制約違反（UPDATE） ---');
+            
+            try {
+                // nameをNULLに更新しようとする
+                await db.execute(`
+                    UPDATE users SET name = NULL WHERE id = 1
+                `);
+                addResult('❌ NOT NULL制約違反が検出されなかった', false);
+            } catch (error) {
+                if (error.message.includes('NOT NULL constraint violation')) {
+                    addResult('✅ UPDATE時のNOT NULL制約違反が正しく検出された');
+                } else {
+                    addResult(`❌ 予期しないエラー: ${error.message}`, false);
+                }
+            }
+            
+            try {
+                // emailをNULLに更新しようとする
+                await db.execute(`
+                    UPDATE users SET email = NULL WHERE id = 2
+                `);
+                addResult('❌ NOT NULL制約違反が検出されなかった', false);
+            } catch (error) {
+                if (error.message.includes('NOT NULL constraint violation')) {
+                    addResult('✅ UPDATE時のNOT NULL制約違反が正しく検出された（email）');
+                } else {
+                    addResult(`❌ 予期しないエラー: ${error.message}`, false);
+                }
+            }
+        }
+
+        async function test5_NullableColumn() {
+            addResult('--- テスト5: NULL許可カラムへのNULL挿入 ---');
+            
+            try {
+                // ageはNULL許可なので、NULLに更新できる
+                await db.execute(`
+                    UPDATE users SET age = NULL WHERE id = 1
+                `);
+                addResult('✅ NULL許可カラムへのNULL更新成功');
+                
+                const result = await db.execute('SELECT * FROM users WHERE id = 1');
+                if (result.rows[0].age === null) {
+                    addResult('✅ NULL値が正しく保存されている');
+                } else {
+                    addResult('❌ NULL値が正しく保存されていない', false);
+                }
+                
+            } catch (error) {
+                addResult(`❌ テスト5失敗: ${error.message}`, false);
+            }
+        }
+
+        async function test6_MultipleNotNullConstraints() {
+            addResult('--- テスト6: 複数のNOT NULL制約 ---');
+            
+            try {
+                await db.execute(`
+                    CREATE TABLE products (
+                        id INTEGER PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        price REAL NOT NULL,
+                        description TEXT,
+                        stock INTEGER NOT NULL
+                    )
+                `);
+                addResult('✅ 複数のNOT NULL制約を持つテーブル作成成功');
+                
+                // 有効なデータを挿入
+                await db.execute(`
+                    INSERT INTO products (id, name, price, description, stock)
+                    VALUES (1, 'Product A', 100.0, 'Description A', 10)
+                `);
+                addResult('✅ 有効なデータの挿入成功');
+                
+                // descriptionはNULL許可
+                await db.execute(`
+                    INSERT INTO products (id, name, price, description, stock)
+                    VALUES (2, 'Product B', 200.0, NULL, 20)
+                `);
+                addResult('✅ NULL許可カラムにNULLを挿入成功');
+                
+                // priceにNULLを挿入しようとする
+                try {
+                    await db.execute(`
+                        INSERT INTO products (id, name, price, description, stock)
+                        VALUES (3, 'Product C', NULL, 'Description C', 30)
+                    `);
+                    addResult('❌ NOT NULL制約違反が検出されなかった', false);
+                } catch (error) {
+                    if (error.message.includes('NOT NULL constraint violation')) {
+                        addResult('✅ priceのNOT NULL制約違反が正しく検出された');
+                    } else {
+                        addResult(`❌ 予期しないエラー: ${error.message}`, false);
+                    }
+                }
+                
+                // stockにNULLを挿入しようとする
+                try {
+                    await db.execute(`
+                        INSERT INTO products (id, name, price, description, stock)
+                        VALUES (4, 'Product D', 400.0, 'Description D', NULL)
+                    `);
+                    addResult('❌ NOT NULL制約違反が検出されなかった', false);
+                } catch (error) {
+                    if (error.message.includes('NOT NULL constraint violation')) {
+                        addResult('✅ stockのNOT NULL制約違反が正しく検出された');
+                    } else {
+                        addResult(`❌ 予期しないエラー: ${error.message}`, false);
+                    }
+                }
+                
+            } catch (error) {
+                addResult(`❌ テスト6失敗: ${error.message}`, false);
+            }
+        }
+    </script>
+</body>
+</html>

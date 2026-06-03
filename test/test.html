@@ -193,6 +193,7 @@
                     testPrimaryKey,
                     testColumnAlias,
                     testIfNotExists,
+                    testDropTable,
                     testErrorHandling
                 ];
 
@@ -620,6 +621,46 @@
             } catch (error) {
                 displayResult('IF NOT EXISTS', false, error.message);
             }
+
+        // Test 26: DROP TABLEのテスト
+        async function testDropTable() {
+            try {
+                // テーブルを作成
+                await db.execute('CREATE TABLE drop_test (id INTEGER, name TEXT)');
+                await db.execute('INSERT INTO drop_test (id, name) VALUES (1, \'Test\')');
+                
+                // テーブルを削除
+                const result1 = await db.execute('DROP TABLE drop_test');
+                const passed1 = result1.success;
+                
+                // 削除されたテーブルにアクセス（エラーになる）
+                let errorCaught1 = false;
+                try {
+                    await db.execute('SELECT * FROM drop_test');
+                } catch (error) {
+                    errorCaught1 = true;
+                }
+                
+                // IF EXISTSで存在しないテーブルを削除（エラーにならない）
+                const result2 = await db.execute('DROP TABLE IF EXISTS non_existent_table');
+                const passed2 = result2.success;
+                
+                // IF EXISTSなしで存在しないテーブルを削除（エラーになる）
+                let errorCaught2 = false;
+                try {
+                    await db.execute('DROP TABLE non_existent_table2');
+                } catch (error) {
+                    errorCaught2 = true;
+                }
+                
+                displayResult('DROP TABLE (テーブル削除)', passed1);
+                displayResult('DROP TABLE (削除確認)', errorCaught1);
+                displayResult('DROP TABLE IF EXISTS (存在しない)', passed2);
+                displayResult('DROP TABLE (エラー確認)', errorCaught2);
+            } catch (error) {
+                displayResult('DROP TABLE', false, error.message);
+            }
+        }
         }
     </script>
 </body>

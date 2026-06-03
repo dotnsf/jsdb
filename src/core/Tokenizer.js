@@ -28,11 +28,11 @@ class Tokenizer {
                 this.tokenizeNumber();
             }
             // 識別子またはキーワード
-            else if (this.isAlpha(char)) {
+            else if (this.isIdentifierStart(char)) {
                 this.tokenizeIdentifier();
             }
             // 名前付きプレースホルダー (:name)
-            else if (char === ':' && this.isAlpha(this.sql[this.position + 1])) {
+            else if (char === ':' && this.isIdentifierStart(this.sql[this.position + 1])) {
                 this.tokenizeNamedPlaceholder();
             }
             // 位置指定プレースホルダー (?)
@@ -136,7 +136,7 @@ class Tokenizer {
         while (this.position < this.sql.length) {
             const char = this.sql[this.position];
 
-            if (this.isAlphaNumeric(char) || char === '_') {
+            if (this.isIdentifierPart(char)) {
                 value += char;
                 this.position++;
             } else {
@@ -147,13 +147,15 @@ class Tokenizer {
         const upperValue = value.toUpperCase();
         const keywords = [
             'SELECT', 'FROM', 'WHERE', 'INSERT', 'INTO', 'VALUES',
-            'UPDATE', 'SET', 'DELETE', 'CREATE', 'TABLE',
+            'UPDATE', 'SET', 'DELETE', 'CREATE', 'TABLE', 'DROP',
             'AND', 'OR', 'NOT', 'NULL', 'LIKE', 'AS',
             'ORDER', 'BY', 'ASC', 'DESC', 'LIMIT', 'OFFSET',
             'GROUP', 'HAVING',
             'COUNT', 'SUM', 'AVG', 'MIN', 'MAX',
             'INTEGER', 'TEXT', 'REAL', 'BLOB', 'DATE', 'DATETIME',
-            'PRIMARY', 'KEY', 'IF', 'EXISTS'
+            'PRIMARY', 'KEY', 'IF', 'EXISTS', 'UNIQUE', 'DEFAULT',
+            'CURRENT_TIMESTAMP', 'CURRENT_DATE', 'CURRENT_TIME',
+            'ALTER', 'ADD', 'COLUMN'
         ];
 
         if (keywords.includes(upperValue)) {
@@ -169,7 +171,7 @@ class Tokenizer {
         this.position++; // ':' をスキップ
         let name = '';
 
-        while (this.position < this.sql.length && this.isAlphaNumeric(this.sql[this.position])) {
+        while (this.position < this.sql.length && this.isIdentifierPart(this.sql[this.position])) {
             name += this.sql[this.position];
             this.position++;
         }
@@ -201,7 +203,7 @@ class Tokenizer {
     }
 
     /**
-     * 文字かチェック
+     * 文字かチェック（後方互換性のため残す）
      */
     isAlpha(char) {
         return /[a-zA-Z]/.test(char);
@@ -215,10 +217,37 @@ class Tokenizer {
     }
 
     /**
-     * 英数字かチェック
+     * 英数字かチェック（後方互換性のため残す）
      */
     isAlphaNumeric(char) {
         return /[a-zA-Z0-9]/.test(char);
+    }
+
+    /**
+     * 識別子の開始文字かチェック（Unicode対応）
+     * 英字、アンダースコア、またはUnicode文字（日本語、中国語など）
+     */
+    isIdentifierStart(char) {
+        if (!char) return false;
+        // ASCII英字とアンダースコア
+        if (/[a-zA-Z_]/.test(char)) return true;
+        // Unicode文字（日本語、中国語、韓国語、アラビア語など）
+        // 基本的に制御文字、空白、記号以外のすべてのUnicode文字を許可
+        const code = char.charCodeAt(0);
+        return code > 127; // ASCII範囲外のすべての文字を許可
+    }
+
+    /**
+     * 識別子の一部として使える文字かチェック（Unicode対応）
+     * 英数字、アンダースコア、またはUnicode文字
+     */
+    isIdentifierPart(char) {
+        if (!char) return false;
+        // ASCII英数字とアンダースコア
+        if (/[a-zA-Z0-9_]/.test(char)) return true;
+        // Unicode文字
+        const code = char.charCodeAt(0);
+        return code > 127; // ASCII範囲外のすべての文字を許可
     }
 
     /**

@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JSDB ALTER TABLE DROP COLUMN Test</title>
+    <script src="../jsdb.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #f44336;
+            padding-bottom: 10px;
+        }
+        .test-section {
+            background: white;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .test-title {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #f44336;
+            margin-bottom: 10px;
+        }
+        .success {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+        .error {
+            color: #f44336;
+            font-weight: bold;
+        }
+        pre {
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        .sql-code {
+            background: #ffebee;
+            padding: 10px;
+            border-left: 4px solid #f44336;
+            margin: 10px 0;
+            font-family: 'Courier New', monospace;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 JSDB ALTER TABLE DROP COLUMN Test</h1>
+    <div id="results"></div>
+
+    <script>
+        const results = document.getElementById('results');
+
+        function addResult(title, content, isSuccess = true) {
+            const section = document.createElement('div');
+            section.className = 'test-section';
+            section.innerHTML = `
+                <div class="test-title">${title}</div>
+                <div class="${isSuccess ? 'success' : 'error'}">${content}</div>
+            `;
+            results.appendChild(section);
+        }
+
+        function addSQL(sql) {
+            const section = document.createElement('div');
+            section.className = 'sql-code';
+            section.textContent = sql;
+            results.appendChild(section);
+        }
+
+        async function runTests() {
+            try {
+                // データベースを削除して新規作成
+                indexedDB.deleteDatabase('test_drop_column_db');
+                await new Promise(resolve => setTimeout(resolve, 100));
+
+                const db = new JSDB('test_drop_column_db');
+
+                // Test 1: 基本的なカラム削除
+                addResult('Test 1', '基本的なカラム削除');
+                addSQL('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT, age INTEGER)');
+                await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT, age INTEGER)');
+                
+                addSQL("INSERT INTO users (id, name, email, age) VALUES (1, 'Alice', 'alice@example.com', 30), (2, 'Bob', 'bob@example.com', 25)");
+                await db.execute("INSERT INTO users (id, name, email, age) VALUES (1, 'Alice', 'alice@example.com', 30), (2, 'Bob', 'bob@example.com', 25)");
+                
+                addSQL('ALTER TABLE users DROP COLUMN age');
+                await db.execute('ALTER TABLE users DROP COLUMN age');
+                
+                let result = await db.execute('SELECT * FROM users');
+                const columns1 = Object.keys(result.rows[0]).filter(k => k !== '__id__');
+                addResult('Test 1 Result', `✓ カラム削除成功: ${columns1.length}カラム (${columns1.join(', ')})`);
+
+                // Test 2: 複数カラムの削除
+                addResult('Test 2', '複数カラムの削除');
+                addSQL('ALTER TABLE users DROP COLUMN email');
+                await db.execute('ALTER TABLE users DROP COLUMN email');
+                
+                result = await db.execute('SELECT * FROM users');
+                const columns2 = Object.keys(result.rows[0]).filter(k => k !== '__id__');
+                addResult('Test 2 Result', `✓ 複数カラム削除成功: ${columns2.length}カラム (${columns2.join(', ')})`);
+
+                // Test 3: データが保持されているか確認
+                addResult('Test 3', 'データの保持確認');
+                result = await db.execute('SELECT * FROM users WHERE id = 1');
+                addResult('Test 3 Result', `✓ データが保持されています: name='${result.rows[0].name}'`);
+
+                // Test 4: エラーケース - 存在しないカラム
+                addResult('Test 4', 'エラーケース: 存在しないカラム');
+                try {
+                    addSQL('ALTER TABLE users DROP COLUMN nonexistent');
+                    await db.execute('ALTER TABLE users DROP COLUMN nonexistent');
+                    addResult('Test 4 Result', '✗ エラーが発生しませんでした', false);
+                } catch (e) {
+                    addResult('Test 4 Result', `✓ 正しくエラーが発生: ${e.message}`);
+                }
+
+                // Test 5: エラーケース - PRIMARY KEYカラムの削除
+                addResult('Test 5', 'エラーケース: PRIMARY KEYカラムの削除');
+                try {
+                    addSQL('ALTER TABLE users DROP COLUMN id');
+                    await db.execute('ALTER TABLE users DROP COLUMN id');
+                    addResult('Test 5 Result', '✗ エラーが発生しませんでした', false);
+                } catch (e) {
+                    addResult('Test 5 Result', `✓ 正しくエラーが発生: ${e.message}`);
+                }
+
+                // Test 6: エラーケース - 最後のカラムの削除
+                addResult('Test 6', 'エラーケース: 最後のカラムの削除');
+                addSQL('CREATE TABLE single_col (id INTEGER PRIMARY KEY)');
+                await db.execute('CREATE TABLE single_col (id INTEGER PRIMARY KEY)');
+                
+                try {
+                    addSQL('ALTER TABLE single_col DROP COLUMN id');
+                    await db.execute('ALTER TABLE single_col DROP COLUMN id');
+                    addResult('Test 6 Result', '✗ エラーが発生しませんでした', false);
+                } catch (e) {
+                    addResult('Test 6 Result', `✓ 正しくエラーが発生: ${e.message}`);
+                }
+
+                // Test 7: エラーケース - 存在しないテーブル
+                addResult('Test 7', 'エラーケース: 存在しないテーブル');
+                try {
+                    addSQL('ALTER TABLE nonexistent DROP COLUMN col');
+                    await db.execute('ALTER TABLE nonexistent DROP COLUMN col');
+                    addResult('Test 7 Result', '✗ エラーが発生しませんでした', false);
+                } catch (e) {
+                    addResult('Test 7 Result', `✓ 正しくエラーが発生: ${e.message}`);
+                }
+
+                // Test 8: describeTable()で新しいスキーマを確認
+                addResult('Test 8', 'describeTable()で新しいスキーマを確認');
+                const schema = await db.describeTable('users');
+                addResult('Test 8 Result', `✓ スキーマ取得成功: ${schema.columns.length}カラム`);
+                
+                const schemaDetails = schema.columns.map(col => {
+                    const constraints = [];
+                    if (col.primaryKey) constraints.push('PRIMARY KEY');
+                    if (col.notNull) constraints.push('NOT NULL');
+                    if (col.unique) constraints.push('UNIQUE');
+                    if (col.defaultValue) constraints.push(`DEFAULT ${JSON.stringify(col.defaultValue)}`);
+                    return `${col.name} ${col.type}${constraints.length > 0 ? ' (' + constraints.join(', ') + ')' : ''}`;
+                }).join('\n');
+                
+                const pre = document.createElement('pre');
+                pre.textContent = schemaDetails;
+                results.appendChild(pre);
+
+                // Test 9: DROP後にADD COLUMNが動作するか確認
+                addResult('Test 9', 'DROP後にADD COLUMNが動作するか確認');
+                addSQL('ALTER TABLE users ADD COLUMN city TEXT DEFAULT "Tokyo"');
+                await db.execute('ALTER TABLE users ADD COLUMN city TEXT DEFAULT "Tokyo"');
+                
+                result = await db.execute('SELECT * FROM users');
+                addResult('Test 9 Result', `✓ ADD COLUMN成功: city='${result.rows[0].city}'`);
+
+                addResult('🎉 All Tests Completed', 'ALTER TABLE DROP COLUMN機能のテストが完了しました！');
+
+            } catch (error) {
+                addResult('Fatal Error', error.message, false);
+                console.error(error);
+            }
+        }
+
+        // ページ読み込み後にテスト実行
+        window.addEventListener('load', runTests);
+    </script>
+</body>
+</html>

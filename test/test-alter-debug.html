@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>JSDB ALTER TABLE Debug</title>
+    <script src="../jsdb.js"></script>
+</head>
+<body>
+    <h1>ALTER TABLE Debug Test</h1>
+    <div id="output"></div>
+
+    <script>
+        const output = document.getElementById('output');
+
+        function log(msg) {
+            const p = document.createElement('p');
+            p.textContent = msg;
+            output.appendChild(p);
+            console.log(msg);
+        }
+
+        async function runTest() {
+            try {
+                log('Deleting database...');
+                indexedDB.deleteDatabase('test_alter_debug');
+                await new Promise(resolve => setTimeout(resolve, 100));
+
+                log('Creating database...');
+                const db = new JSDB('test_alter_debug');
+
+                log('Creating table...');
+                const createResult = await db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)');
+                log('CREATE TABLE result: ' + JSON.stringify(createResult));
+
+                log('Inserting data...');
+                const insertResult = await db.execute("INSERT INTO users (id, name) VALUES (1, 'Alice'), (2, 'Bob')");
+                log('INSERT result: ' + JSON.stringify(insertResult));
+
+                log('Selecting data before ALTER...');
+                const selectBefore = await db.execute('SELECT * FROM users');
+                log('SELECT before result: ' + JSON.stringify(selectBefore));
+
+                log('Executing ALTER TABLE...');
+                const alterResult = await db.execute('ALTER TABLE users ADD COLUMN email TEXT');
+                log('ALTER TABLE result: ' + JSON.stringify(alterResult));
+
+                log('Selecting data after ALTER...');
+                const selectAfter = await db.execute('SELECT * FROM users');
+                log('SELECT after result: ' + JSON.stringify(selectAfter));
+
+                log('SUCCESS!');
+
+            } catch (error) {
+                log('ERROR: ' + error.message);
+                console.error(error);
+            }
+        }
+
+        window.addEventListener('load', runTest);
+    </script>
+</body>
+</html>

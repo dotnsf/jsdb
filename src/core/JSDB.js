@@ -65,6 +65,56 @@ class JSDB {
     }
 
     /**
+     * データベース内の全テーブル名を取得
+     * @returns {Promise<Array<string>>} テーブル名の配列
+     */
+    async listTables() {
+        // 初期化されていない場合は初期化
+        if (!this.initialized) {
+            await this.initialize();
+        }
+
+        try {
+            return this.dbManager.getAllTableNames();
+        } catch (error) {
+            throw new Error(`Failed to list tables: ${error.message}`);
+        }
+    }
+
+    /**
+     * テーブルの詳細情報を取得
+     * @param {string} tableName - テーブル名
+     * @returns {Promise<Object>} テーブル情報（tableName, columns, primaryKey）
+     */
+    async describeTable(tableName) {
+        if (!tableName || typeof tableName !== 'string') {
+            throw new Error('Table name is required and must be a string');
+        }
+
+        // 初期化されていない場合は初期化
+        if (!this.initialized) {
+            await this.initialize();
+        }
+
+        try {
+            // テーブルが存在するかチェック
+            if (!this.dbManager.tableExists(tableName)) {
+                throw new Error(`Table '${tableName}' does not exist`);
+            }
+
+            const tableInfo = await this.dbManager.getTableInfo(tableName);
+            
+            if (!tableInfo) {
+                throw new Error(`Failed to get table information for '${tableName}'`);
+            }
+
+            return tableInfo;
+        } catch (error) {
+            throw new Error(`Failed to describe table: ${error.message}`);
+        }
+    }
+
+    /**
      * データベースを閉じる
      */
     close() {

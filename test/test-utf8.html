@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JSDB UTF-8 Test</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        .test-section {
+            background: white;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .test-result {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        pre {
+            background-color: #f4f4f4;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        .data-display {
+            margin: 10px 0;
+            padding: 10px;
+            background-color: #f9f9f9;
+            border-left: 4px solid #4CAF50;
+        }
+    </style>
+</head>
+<body>
+    <h1>🌐 JSDB UTF-8 対応テスト</h1>
+
+    <div class="test-section">
+        <h2>テスト概要</h2>
+        <p>このテストでは、JSDBが様々なUTF-8文字を正しく処理できることを確認します。</p>
+        <ul>
+            <li>日本語（ひらがな、カタカナ、漢字）</li>
+            <li>絵文字</li>
+            <li>特殊文字</li>
+            <li>多言語文字（中国語、韓国語、アラビア語など）</li>
+        </ul>
+    </div>
+
+    <div class="test-section">
+        <h2>テスト実行</h2>
+        <button onclick="runAllTests()">全テスト実行</button>
+        <button onclick="clearResults()">結果クリア</button>
+        <div id="results"></div>
+    </div>
+
+    <script src="../jsdb.js"></script>
+    <script>
+        let db;
+        const resultsDiv = document.getElementById('results');
+
+        function addResult(message, isSuccess = true) {
+            const div = document.createElement('div');
+            div.className = `test-result ${isSuccess ? 'success' : 'error'}`;
+            div.textContent = message;
+            resultsDiv.appendChild(div);
+        }
+
+        function addDataDisplay(title, data) {
+            const div = document.createElement('div');
+            div.className = 'data-display';
+            div.innerHTML = `<strong>${title}</strong><pre>${JSON.stringify(data, null, 2)}</pre>`;
+            resultsDiv.appendChild(div);
+        }
+
+        function clearResults() {
+            resultsDiv.innerHTML = '';
+        }
+
+        async function runAllTests() {
+            clearResults();
+            
+            try {
+                // データベース初期化
+                addResult('📝 テスト開始: UTF-8文字列処理');
+                
+                // 既存のデータベースを削除
+                await JSDB.deleteDatabase('utf8_test_db');
+                
+                db = new JSDB('utf8_test_db');
+                await db.initialize();
+                addResult('✅ データベース初期化成功');
+
+                // テスト1: 日本語テーブル名とカラム名
+                await test1_JapaneseTableAndColumns();
+                
+                // テスト2: 日本語データの挿入と取得
+                await test2_JapaneseData();
+                
+                // テスト3: 絵文字の処理
+                await test3_EmojiData();
+                
+                // テスト4: 多言語データ
+                await test4_MultilingualData();
+                
+                // テスト5: 特殊文字とエスケープ
+                await test5_SpecialCharacters();
+                
+                // テスト6: LIKE演算子でのUTF-8検索
+                await test6_UTF8Search();
+                
+                addResult('🎉 全テスト完了！', true);
+                
+            } catch (error) {
+                addResult(`❌ エラー: ${error.message}`, false);
+                console.error(error);
+            }
+        }
+
+        async function test1_JapaneseTableAndColumns() {
+            addResult('--- テスト1: 日本語テーブル名とカラム名 ---');
+            
+            try {
+                // 日本語のテーブル名とカラム名でテーブル作成
+                await db.execute(`
+                    CREATE TABLE ユーザー (
+                        id INTEGER PRIMARY KEY,
+                        名前 TEXT,
+                        メールアドレス TEXT
+                    )
+                `);
+                addResult('✅ 日本語テーブル名・カラム名でテーブル作成成功');
+                
+                // テーブル情報を取得
+                const tableInfo = await db.describeTable('ユーザー');
+                addDataDisplay('テーブル情報', tableInfo);
+                
+                if (tableInfo.columns.some(col => col.name === '名前')) {
+                    addResult('✅ 日本語カラム名が正しく保存されている');
+                } else {
+                    addResult('❌ 日本語カラム名が正しく保存されていない', false);
+                }
+                
+            } catch (error) {
+                addResult(`❌ テスト1失敗: ${error.message}`, false);
+            }
+        }
+
+        async function test2_JapaneseData() {
+            addResult('--- テスト2: 日本語データの挿入と取得 ---');
+            
+            try {
+                // 日本語データを挿入
+                await db.execute(`
+                    INSERT INTO ユーザー (id, 名前, メールアドレス)
+                    VALUES (1, '山田太郎', 'yamada@example.com')
+                `);
+                
+                await db.execute(`
+                    INSERT INTO ユーザー (id, 名前, メールアドレス)
+                    VALUES (2, '佐藤花子', 'sato@example.com')
+                `);
+                
+                addResult('✅ 日本語データ挿入成功');
+                
+                // データを取得
+                const result = await db.execute('SELECT * FROM ユーザー');
+                addDataDisplay('取得データ', result.rows);
+                
+                if (result.rows[0].名前 === '山田太郎' && result.rows[1].名前 === '佐藤花子') {
+                    addResult('✅ 日本語データが正しく取得できた');
+                } else {
+                    addResult('❌ 日本語データが正しく取得できない', false);
+                }
+                
+            } catch (error) {
+                addResult(`❌ テスト2失敗: ${error.message}`, false);
+            }
+        }
+
+        async function test3_EmojiData() {
+            addResult('--- テスト3: 絵文字の処理 ---');
+            
+            try {
+                await db.execute(`
+                    CREATE TABLE messages (
+                        id INTEGER PRIMARY KEY,
+                        content TEXT
+                    )
+                `);
+                
+                // 絵文字を含むデータを挿入
+                const emojiData = [
+                    { id: 1, content: 'こんにちは 👋' },
+                    { id: 2, content: '素晴らしい！ 🎉🎊' },
+                    { id: 3, content: '❤️💙💚💛🧡💜' },
+                    { id: 4, content: '🍣🍜🍱🍙' }
+                ];
+                
+                for (const data of emojiData) {
+                    await db.execute(
+                        'INSERT INTO messages (id, content) VALUES (?, ?)',
+                        [data.id, data.content]
+                    );
+                }
+                
+                addResult('✅ 絵文字データ挿入成功');
+                
+                // データを取得
+                const result = await db.execute('SELECT * FROM messages ORDER BY id');
+                addDataDisplay('絵文字データ', result.rows);
+                
+                let allMatch = true;
+                for (let i = 0; i < emojiData.length; i++) {
+                    if (result.rows[i].content !== emojiData[i].content) {
+                        allMatch = false;
+                        break;
+                    }
+                }
+                
+                if (allMatch) {
+                    addResult('✅ 絵文字が正しく保存・取得できた');
+                } else {
+                    addResult('❌ 絵文字が正しく保存・取得できない', false);
+                }
+                
+            } catch (error) {
+                addResult(`❌ テスト3失敗: ${error.message}`, false);
+            }
+        }
+
+        async function test4_MultilingualData() {
+            addResult('--- テスト4: 多言語データ ---');
+            
+            try {
+                await db.execute(`
+                    CREATE TABLE languages (
+                        id INTEGER PRIMARY KEY,
+                        language TEXT,
+                        greeting TEXT
+                    )
+                `);
+                
+                const multilingualData = [
+                    { id: 1, language: '日本語', greeting: 'こんにちは' },
+                    { id: 2, language: '中文', greeting: '你好' },
+                    { id: 3, language: '한국어', greeting: '안녕하세요' },
+                    { id: 4, language: 'العربية', greeting: 'مرحبا' },
+                    { id: 5, language: 'Русский', greeting: 'Привет' },
+                    { id: 6, language: 'ไทย', greeting: 'สวัสดี' }
+                ];
+                
+                for (const data of multilingualData) {
+                    await db.execute(
+                        'INSERT INTO languages (id, language, greeting) VALUES (?, ?, ?)',
+                        [data.id, data.language, data.greeting]
+                    );
+                }
+                
+                addResult('✅ 多言語データ挿入成功');
+                
+                // データを取得
+                const result = await db.execute('SELECT * FROM languages ORDER BY id');
+                addDataDisplay('多言語データ', result.rows);
+                
+                let allMatch = true;
+                for (let i = 0; i < multilingualData.length; i++) {
+                    if (result.rows[i].greeting !== multilingualData[i].greeting) {
+                        allMatch = false;
+                        break;
+                    }
+                }
+                
+                if (allMatch) {
+                    addResult('✅ 多言語データが正しく保存・取得できた');
+                } else {
+                    addResult('❌ 多言語データが正しく保存・取得できない', false);
+                }
+                
+            } catch (error) {
+                addResult(`❌ テスト4失敗: ${error.message}`, false);
+            }
+        }
+
+        async function test5_SpecialCharacters() {
+            addResult('--- テスト5: 特殊文字とエスケープ ---');
+            
+            try {
+                await db.execute(`
+                    CREATE TABLE special_chars (
+                        id INTEGER PRIMARY KEY,
+                        content TEXT
+                    )
+                `);
+                
+                const specialData = [
+                    { id: 1, content: "引用符: 'シングル' \"ダブル\"" },
+                    { id: 2, content: "改行:\n新しい行" },
+                    { id: 3, content: "タブ:\tタブ文字" },
+                    { id: 4, content: "バックスラッシュ: \\" },
+                    { id: 5, content: "記号: !@#$%^&*()_+-=[]{}|;:,.<>?/" }
+                ];
+                
+                for (const data of specialData) {
+                    await db.execute(
+                        'INSERT INTO special_chars (id, content) VALUES (?, ?)',
+                        [data.id, data.content]
+                    );
+                }
+                
+                addResult('✅ 特殊文字データ挿入成功');
+                
+                // データを取得
+                const result = await db.execute('SELECT * FROM special_chars ORDER BY id');
+                addDataDisplay('特殊文字データ', result.rows);
+                
+                let allMatch = true;
+                for (let i = 0; i < specialData.length; i++) {
+                    if (result.rows[i].content !== specialData[i].content) {
+                        allMatch = false;
+                        break;
+                    }
+                }
+                
+                if (allMatch) {
+                    addResult('✅ 特殊文字が正しく保存・取得できた');
+                } else {
+                    addResult('❌ 特殊文字が正しく保存・取得できない', false);
+                }
+                
+            } catch (error) {
+                addResult(`❌ テスト5失敗: ${error.message}`, false);
+            }
+        }
+
+        async function test6_UTF8Search() {
+            addResult('--- テスト6: LIKE演算子でのUTF-8検索 ---');
+            
+            try {
+                // 日本語でLIKE検索
+                const result1 = await db.execute(
+                    "SELECT * FROM ユーザー WHERE 名前 LIKE '%太郎%'"
+                );
+                
+                if (result1.rows.length === 1 && result1.rows[0].名前 === '山田太郎') {
+                    addResult('✅ 日本語LIKE検索成功');
+                } else {
+                    addResult('❌ 日本語LIKE検索失敗', false);
+                }
+                
+                // 絵文字でLIKE検索
+                const result2 = await db.execute(
+                    "SELECT * FROM messages WHERE content LIKE '%🎉%'"
+                );
+                
+                if (result2.rows.length > 0) {
+                    addResult('✅ 絵文字LIKE検索成功');
+                    addDataDisplay('検索結果', result2.rows);
+                } else {
+                    addResult('❌ 絵文字LIKE検索失敗', false);
+                }
+                
+            } catch (error) {
+                addResult(`❌ テスト6失敗: ${error.message}`, false);
+            }
+        }
+    </script>
+</body>
+</html>
