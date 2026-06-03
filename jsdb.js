@@ -1290,13 +1290,15 @@ class JSDB {
     }
 
     /**
-     * 利用可能なデータベース一覧を取得（Chrome/Edge のみ）
+     * 利用可能なデータベース一覧を取得
+     * @returns {Promise<string[]>} データベース名の配列
      */
     static async listDatabases() {
         if (indexedDB.databases) {
-            return await indexedDB.databases();
+            const databases = await indexedDB.databases();
+            return databases.map(db => db.name);
         } else {
-            throw new Error('listDatabases is not supported in this browser');
+            throw new Error('listDatabases is not supported in this browser (requires Chrome/Edge)');
         }
     }
 }

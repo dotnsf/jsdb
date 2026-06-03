@@ -105,6 +105,24 @@ await db.execute("SELECT * FROM users WHERE name = :name", { name: 'Alice' });
 db.close();
 ```
 
+#### `JSDB.listDatabases()` (静的メソッド)
+
+作成済みのデータベース一覧を取得します。
+
+**戻り値:**
+- Promise<string[]> - データベース名の配列
+
+**例:**
+```javascript
+const databases = await JSDB.listDatabases();
+console.log(databases); // ['mydb', 'testdb', 'userdb']
+```
+
+**注意:**
+- この機能は Chrome/Edge でのみサポートされています
+- Firefox や Safari では使用できません
+
+
 #### `JSDB.deleteDatabase(dbName)` (静的メソッド)
 
 データベースを削除します。
